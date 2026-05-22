@@ -14,6 +14,8 @@ from . import asset_importer
 from . import asset_db
 from . import map_importer
 from . import preferences
+from . import import_validation
+from . import localization
 
 
 def _get_object_aabb_verts(obj: bpy.types.Object) -> list[tuple[float, float, float]]:
@@ -97,7 +99,10 @@ class UMODELTOOLS_OT_recover_unreal_asset(asset_importer.AssetImporter, bpy.type
 
                 obj.hide_set(True)
 
-                new_obj = bpy.data.objects.new(name=f"{obj.name}_Replaced", object_data=asset_mesh)
+                new_obj = bpy.data.objects.new(
+                    name=utils.normalize_ue_name(f"{obj.name}_Replaced", fallback="Recovered_Asset"),
+                    object_data=asset_mesh
+                )
                 new_obj.matrix_world = A
                 new_obj.umodel_tools_asset.enabled = True
                 new_obj.umodel_tools_asset.asset_path = self.asset_path
@@ -106,7 +111,10 @@ class UMODELTOOLS_OT_recover_unreal_asset(asset_importer.AssetImporter, bpy.type
 
         # import the asset as a new object
         else:
-            new_obj = bpy.data.objects.new(name=f"{asset.name}_Instance", object_data=asset_mesh)
+            new_obj = bpy.data.objects.new(
+                name=utils.normalize_ue_name(f"{asset.name}_Instance", fallback="Asset_Instance"),
+                object_data=asset_mesh
+            )
             new_obj.umodel_tools_asset.enabled = True
             new_obj.umodel_tools_asset.asset_path = self.asset_path
             new_obj.location = context.scene.cursor.location
@@ -188,7 +196,7 @@ class UMODELTOOLS_OT_import_unreal_assets(asset_importer.AssetImporter, bpy.type
         db = asset_db.AssetDB(asset_dir)
         with utils.std_out_err_redirect_tqdm() as orig_stdout:
             with tqdm.tqdm(total=total_models, file=orig_stdout, dynamic_ncols=True, ascii=True,
-                           desc="Importing assets") as progress_bar:
+                           desc=localization.t_report("Importing assets")) as progress_bar:
                 for root, _, files in os.walk(asset_sub_dir_abs):
                     for file in files:
                         file_base, ext = os.path.splitext(file)
@@ -198,7 +206,7 @@ class UMODELTOOLS_OT_import_unreal_assets(asset_importer.AssetImporter, bpy.type
                         file_abs = os.path.join(root, file_base) + '.uasset'
                         file_rel = os.path.relpath(file_abs, umodel_export_dir)
 
-                        print(f"\n\nImporting asset {file_rel}...")
+                        print(f"\n\n{localization.t_report('Importing asset')} {file_rel}...")
                         self._load_asset(context=context,
                                          asset_dir=asset_dir,
                                          asset_path=file_rel,
@@ -272,13 +280,24 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
 
         db = asset_db.AssetDB(asset_dir)
 
+        import_ok = True
         for file in self.files:
-            self._import_map(context=context, umodel_export_dir=umodel_export_dir, asset_dir=asset_dir, db=db,
-                             map_path=os.path.join(self.directory, file.name), game_profile=profile.game)
+            import_ok = self._import_map(context=context, umodel_export_dir=umodel_export_dir, asset_dir=asset_dir,
+                                         db=db, map_path=os.path.join(self.directory, file.name),
+                                         game_profile=profile.game) and import_ok
 
         db.save_db()
 
         self._print_unrecognized_textures()
+
+        if not import_ok:
+            return self._op_message('ERROR', "Map import failed. Check console for details.")
+
+        validation_settings = import_validation.get_import_validation_settings(preferences.get_addon_preferences())
+        validation_result = import_validation.validate_import_result(context.scene, validation_settings)
+        validation_status = import_validation.report_import_validation(self, validation_result)
+        if validation_status == {"CANCELLED"}:
+            return validation_status
 
         if self._has_warnings:
             self._op_message('WARNING', "Asset import had warnnings. Check console for details.")
@@ -295,7 +314,7 @@ class UMODELTOOLS_OT_realign_asset(bpy.types.Operator):
     def execute(self, context: bpy.types.Context) -> set[str]:
 
         if not len(context.selected_objects) == 2:
-            self.report({'ERROR'}, "Exactly 2 objects must be selected.")
+            self.report({'ERROR'}, localization.t_report("Exactly 2 objects must be selected."))
             return {'CANCELLED'}
 
         asset_idx = None
@@ -305,7 +324,7 @@ class UMODELTOOLS_OT_realign_asset(bpy.types.Operator):
                 break
 
         if asset_idx is None:
-            self.report({'ERROR'}, "One of the objects must be an Unreal asset.")
+            self.report({'ERROR'}, localization.t_report("One of the objects must be an Unreal asset."))
             return {'CANCELLED'}
 
         asset_obj = context.selected_objects[asset_idx]

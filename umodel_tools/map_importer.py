@@ -11,6 +11,7 @@ import tqdm
 from . import asset_db
 from . import asset_importer
 from . import utils
+from . import localization
 
 
 def split_object_path(object_path):
@@ -35,6 +36,29 @@ def parse_ue_object_name(obj_name: str) -> tuple[str, str, str]:
     assert len(names) >= 2
 
     return obj_type, names[-2], names[-1]
+
+
+def create_light_data(name: t.Any, ue_light_type: str) -> bpy.types.Light | None:
+    """Create a Blender light data-block from a supported UE light component type."""
+    blender_light_type = GameLight.light_type_mapping.get(ue_light_type)
+    if blender_light_type is None:
+        utils.warn_ue_mapping("light", name, "Unsupported UE light component type.", ue_type=ue_light_type)
+        return None
+
+    light_type_prop = bpy.types.Light.bl_rna.properties["type"]
+    supported_light_types = {item.identifier for item in light_type_prop.enum_items}
+    if blender_light_type not in supported_light_types:
+        utils.warn_ue_mapping(
+            "light",
+            name,
+            "Mapped Blender light type is not supported by this Blender runtime.",
+            ue_type=ue_light_type,
+            blender_type=blender_light_type,
+            supported=sorted(supported_light_types),
+        )
+        return None
+
+    return bpy.data.lights.new(name=utils.normalize_ue_name(name, fallback="Light"), type=blender_light_type)
 
 
 class InstanceTransform:
@@ -238,7 +262,7 @@ class StaticMesh:
         if self.is_instanced:
             for instance_trs in self.instance_transforms:
                 mat_world = trs.matrix_4x4 @ instance_trs.matrix_4x4
-                new_obj = bpy.data.objects.new(obj.name, object_data=obj.data)
+                new_obj = bpy.data.objects.new(utils.normalize_ue_name(obj.name, fallback="StaticMesh"), object_data=obj.data)
                 new_obj.rotation_mode = 'XYZ'
 
                 if self.parent_mtx is None:
@@ -250,7 +274,7 @@ class StaticMesh:
                 objects.append(new_obj)
 
         else:
-            new_obj = bpy.data.objects.new(obj.name, object_data=obj.data)
+            new_obj = bpy.data.objects.new(utils.normalize_ue_name(obj.name, fallback="StaticMesh"), object_data=obj.data)
 
             if self.parent_mtx is None:
                 new_obj.scale = (trs.scale[0], trs.scale[1], trs.scale[2])
@@ -272,14 +296,16 @@ class GameLight:
     light_types = [
         'SpotLightComponent',
         'RectLightComponent',
-        'PointLightComponent'
+        'PointLightComponent',
+        'DirectionalLightComponent'
     ]
 
     #: maps UE light types to Blender's light types
     light_type_mapping = {
         'SpotLightComponent': 'SPOT',
         'RectLightComponent': 'AREA',
-        'PointLightComponent': 'POINT'
+        'PointLightComponent': 'POINT',
+        'DirectionalLightComponent': 'SUN'
     }
 
     class IntensityUnits(enum.Enum):
@@ -310,6 +336,7 @@ class GameLight:
     inner_cone_angle: float = 0.0
     cast_shadows: bool = False
     source_radius: bool = 0.0
+    source_angle: float = 0.0
     attenuation_radius: float = 0.0
     source_width: float = 0.0
     source_height: float = 0.0
@@ -448,7 +475,7 @@ class GameLight:
         return self.no_entity
 
     def __init__(self, json_obj, json_entity) -> None:
-        self.entity_name = json_entity.get("Outer", 'Error')
+        self.entity_name = utils.normalize_ue_name(json_entity.get("Outer", 'Error'), fallback="Light")
         self.type = json_entity.get("Type", None)
 
         if not self.type:
@@ -498,6 +525,9 @@ class GameLight:
         if (source_radius := props.get("SourceRadius", None)) is not None:
             self.source_radius = source_radius
 
+        if (source_angle := props.get("LightSourceAngle", props.get("SourceAngle", None))) is not None:
+            self.source_angle = source_angle
+
         if (cast_shadows := props.get("CastShadows", None)) is not None:
             self.cast_shadows = cast_shadows
 
@@ -517,8 +547,12 @@ class GameLight:
             print(f"Refusing to import {self.entity_name} due to failed checks.")
             return False
 
-        light_data = bpy.data.lights.new(name=self.entity_name, type=self.light_type_mapping.get(self.type))
-        light_obj = bpy.data.objects.new(name=self.entity_name, object_data=light_data)
+        light_data = create_light_data(self.entity_name, self.type)
+        if light_data is None:
+            return False
+
+        light_obj = bpy.data.objects.new(name=utils.normalize_ue_name(self.entity_name, fallback="Light"),
+                                         object_data=light_data)
 
         if self.parent_mtx is None:
             light_obj.scale = (self.scale[0], self.scale[1], self.scale[2])
@@ -558,12 +592,16 @@ class GameLight:
                         light_data.energy = self.intensity * 683 / (4 * math.pi)
                     case GameLight.IntensityUnits.Lumens:
                         light_data.energy = self.intensity / 683
+            case 'SUN':
+                light_data.energy = self.intensity
+                if self.source_angle:
+                    light_data.angle = math.radians(self.source_angle)
 
         light_data.color = self.color
         light_data.shadow_soft_size = self.source_radius * 0.01
         light_data.use_shadow = self.cast_shadows
 
-        if hasattr(light_data, "cycles"):
+        if hasattr(light_data, "cycles") and "cast_shadow" in light_data.cycles.bl_rna.properties:
             light_data.cycles.cast_shadow = self.cast_shadows
 
         if self.attenuation_radius:
@@ -611,7 +649,9 @@ class MapImporter(asset_importer.AssetImporter):
             print(f"Error: File {map_path} not found. Skipping.")
             return False
 
-        json_filename = os.path.basename(map_path)
+        self._path_resolve_stats.reset()
+
+        json_filename = utils.normalize_ue_name(os.path.basename(map_path), fallback="Imported_Map")
         import_collection = bpy.data.collections.new(json_filename)
 
         bpy.context.scene.collection.children.link(import_collection)
@@ -622,7 +662,10 @@ class MapImporter(asset_importer.AssetImporter):
             # handle the different entity types (mehses, lights, etc)
             with utils.std_out_err_redirect_tqdm() as orig_stdout:
                 for entity in tqdm.tqdm(json_object,
-                                        desc=f"Importing map \"{os.path.splitext(os.path.basename(map_path))[0]}\"",
+                                        desc=(
+                                            f"{localization.t_report('Importing map')} "
+                                            f"\"{os.path.splitext(os.path.basename(map_path))[0]}\""
+                                        ),
                                         file=orig_stdout,
                                         dynamic_ncols=True,
                                         ascii=True):
@@ -660,7 +703,7 @@ class MapImporter(asset_importer.AssetImporter):
                         light = GameLight(json_object, entity)
 
                         if light.invalid:
-                            utils.verbose_print(f"Info: Skipping instance of {static_mesh.entity_name}. "
+                            utils.verbose_print(f"Info: Skipping instance of {light.entity_name}. "
                                                 "Invalid property.")
                             continue
 
@@ -668,5 +711,8 @@ class MapImporter(asset_importer.AssetImporter):
 
         # TODO: required due to unknown reason, blender bug? Otherwise, some meshes have None materials.
         bpy.app.timers.register(self._library_reload, first_interval=0.010)
+        prefs = utils.preferences.get_addon_preferences()
+        if getattr(prefs, "report_path_resolution_stats", True):
+            print(f"{localization.t_report('Path resolution summary')}: {self._path_resolve_stats.summary()}")
 
         return True

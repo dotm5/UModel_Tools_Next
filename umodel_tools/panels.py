@@ -1,6 +1,7 @@
 import bpy
 
 from .preferences import get_addon_preferences
+from . import localization
 
 
 class UMODELTOOLS_PT_asset(bpy.types.Panel):
@@ -48,7 +49,9 @@ def topbar_menu_func(menu: bpy.types.Menu, context: bpy.types.Context):
         return
 
     cur_profile = prefs.get_active_profile()
-    menu.layout.label(text=f"UMT Active profile: {cur_profile.name if cur_profile else None}")
+    menu.layout.label(
+        text=f"{localization.t_iface('UMT Active profile')}: {cur_profile.name if cur_profile else None}"
+    )
 
 
 def bl_register() -> None:

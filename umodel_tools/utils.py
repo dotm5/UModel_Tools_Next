@@ -3,9 +3,11 @@ import sys
 import typing as t
 import tempfile
 import contextlib
+import json
 
 import bpy
 import tqdm
+from tqdm.contrib import DummyTqdmFile
 
 from . import preferences
 
@@ -58,6 +60,73 @@ def compare_paths(first: str, second: str) -> bool:
 DataBlock: t.TypeAlias = bpy.types.Object | bpy.types.Material | bpy.types.Image
 
 
+def normalize_ue_name(value: t.Any, fallback: str = "Unnamed") -> str:
+    """Convert UE/FModel object references into a Blender API-safe name string."""
+    if isinstance(value, str):
+        name = value
+    elif value is None:
+        name = fallback
+    elif isinstance(value, dict):
+        for key in ("Name", "ObjectName", "ObjectPath", "Outer", "Type"):
+            if key in value and value[key] not in {None, ""}:
+                return normalize_ue_name(value[key], fallback=fallback)
+        name = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    else:
+        name = str(value)
+
+    name = name.replace("\x00", "").strip()
+    return name if name else fallback
+
+
+def warn_ue_mapping(kind: str, name: t.Any, reason: str, **details: t.Any) -> None:
+    """Emit a structured warning for UE data that cannot be mapped directly."""
+    payload = {
+        "kind": kind,
+        "name": normalize_ue_name(name),
+        "reason": reason,
+        "details": details,
+    }
+    print(f"UMODEL_TOOLS_WARNING {json.dumps(payload, ensure_ascii=False, sort_keys=True)}")
+
+
+_BSDF_SOCKET_ALIASES = {
+    "Specular": ("Specular", "Specular IOR Level"),
+    "Clearcoat": ("Clearcoat", "Coat Weight"),
+    "Clearcoat Roughness": ("Clearcoat Roughness", "Coat Roughness"),
+}
+
+
+def get_bsdf_input(bsdf_node: bpy.types.Node, socket_name: str) -> bpy.types.NodeSocket:
+    """Return a Principled BSDF input by RNA identifier/name, including known API renames."""
+    names = _BSDF_SOCKET_ALIASES.get(socket_name, (socket_name,))
+
+    for socket in bsdf_node.inputs:
+        if socket.identifier in names or socket.name in names:
+            return socket
+
+    available = [(socket.identifier, socket.name) for socket in bsdf_node.inputs]
+    raise KeyError(f"Principled BSDF input {socket_name!r} not found. Available sockets: {available!r}")
+
+
+def set_socket_value(socket: bpy.types.NodeSocket, value: t.Any) -> None:
+    """Set a socket default value while respecting scalar vs array RNA socket values."""
+    current_value = getattr(socket, "default_value", None)
+    if current_value is None:
+        raise TypeError(f"Socket {socket.identifier!r} has no default_value.")
+
+    if hasattr(current_value, "__len__") and not isinstance(current_value, (str, bytes)):
+        length = len(current_value)
+        if isinstance(value, (int, float)):
+            if length == 4:
+                socket.default_value = (float(value), float(value), float(value), current_value[3])
+            else:
+                socket.default_value = tuple(float(value) for _ in range(length))
+        else:
+            socket.default_value = value
+    else:
+        socket.default_value = value
+
+
 def linked_libraries_search(lib_filepath: str, dtype: t.Type[DataBlock]) -> t.Optional[DataBlock]:
     """Check already linked libraries for the associated data block and return it.
 
@@ -90,11 +159,8 @@ def std_out_err_redirect_tqdm():
     """
     orig_out_err = sys.stdout, sys.stderr
     try:
-        sys.stdout, sys.stderr = map(tqdm.contrib.DummyTqdmFile, orig_out_err)
+        sys.stdout, sys.stderr = map(DummyTqdmFile, orig_out_err)
         yield orig_out_err[0]
-    # Relay exceptions
-    except Exception as exc:
-        raise exc
     # Always restore sys.stdout/err if necessary
     finally:
         sys.stdout, sys.stderr = orig_out_err

@@ -158,3 +158,17 @@ cython_debug/
 !/umodel_tools/third_party/io_import_scene_unreal_psa_psk_280.py
 /docs/build
 /docs/build/*
+
+# Local export/test artifacts
+/asset_cache/
+/asset_cache_import_test/
+/umodel_export_truncated_test/
+/fmodel/
+/umodel_win32/
+/*.zip
+/1.ps1
+/Envi_Wlbl.json
+/probe_blender_api.py
+/probe_blender_api_output.json
+/probe_blender_i18n.py
+/test_localization.py
