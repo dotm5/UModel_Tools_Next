@@ -7,7 +7,11 @@ import tempfile
 
 ADDON_ROOT = r"D:\addon"
 EXPORT_DIR = r"D:\UmodelExport"
-MAP_PATH = os.path.join(EXPORT_DIR, "Envi_Wlbl.json")
+MAP_PATH_CANDIDATES = [
+    os.path.join(EXPORT_DIR, "Envi_Wlbl.json"),
+    os.path.join(ADDON_ROOT, "Envi_Wlbl.json"),
+]
+MAP_PATH = next((path for path in MAP_PATH_CANDIDATES if os.path.exists(path)), MAP_PATH_CANDIDATES[0])
 SCRIPT_PATH = os.path.join(ADDON_ROOT, "scripts", "audit_material_mappings.py")
 
 
@@ -43,6 +47,12 @@ def main():
         raise AssertionError(f"Expected glass material to use glass shader: {glass_row}")
     if "mix_shader.Fac=0.8" not in glass_row["node_summary"]:
         raise AssertionError(f"Expected transparent glass mix summary: {glass_row['node_summary']!r}")
+
+    mouse_row = _find_row(rows, "S_Envi_Wlbl_Mouse_02a_26", "MI_Envi_Wlbl_Mouse_02a")
+    if mouse_row["blend_mode"] != "BLEND_Opaque (0)":
+        raise AssertionError(f"Expected mouse material to be opaque: {mouse_row}")
+    if "D:image.Alpha->bsdf.Alpha" in mouse_row["node_summary"]:
+        raise AssertionError(f"Opaque packed diffuse alpha should not feed BSDF alpha: {mouse_row}")
 
     suspicious_rows = [
         row for row in rows

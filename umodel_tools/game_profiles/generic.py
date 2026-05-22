@@ -21,6 +21,7 @@ class MaterialContext:
     bsdf_node: t.Optional[bpy.types.ShaderNodeBsdfPrincipled | bpy.types.ShaderNodeBsdfDiffuse]
     desc_ast: lark.Tree
     use_pbr: bool
+    blend_mode: str | None
     linked_maps: set[str] = dataclasses.field(default_factory=set)
 
 
@@ -28,7 +29,12 @@ _state_buffer: dict[bpy.types.Material, MaterialContext] = {}
 
 
 def process_material(mat: bpy.types.Material, desc_ast: lark.Tree, use_pbr: bool):  # pylint: disable=unused-argument
-    _state_buffer[mat] = MaterialContext(bsdf_node=None, desc_ast=desc_ast, use_pbr=use_pbr)
+    _state_buffer[mat] = MaterialContext(
+        bsdf_node=None,
+        desc_ast=desc_ast,
+        use_pbr=use_pbr,
+        blend_mode=_extract_blend_mode(desc_ast),
+    )
 
 
 def do_process_texture(tex_type: str, tex_short_name: str) -> bool:
@@ -71,6 +77,9 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
     })
 
     for connection in rule.connections:
+        if _should_skip_connection(mat_ctx, rule, connection):
+            continue
+
         source_socket = _resolve_socket(nodes, connection.source, "output")
         target_socket = _resolve_socket(nodes, connection.target, "input")
         if source_socket is not None and target_socket is not None:
@@ -121,6 +130,41 @@ def _create_rule_nodes(mat: bpy.types.Material, rule: material_rules.TextureRule
         node_spec.name: mat.node_tree.nodes.new(node_spec.node_type)
         for node_spec in rule.nodes
     }
+
+
+def _should_skip_connection(mat_ctx: MaterialContext,
+                            rule: material_rules.TextureRule,
+                            connection: material_rules.ConnectionSpec) -> bool:
+    if (
+        rule.diffuse
+        and connection.source == "image.Alpha"
+        and connection.target == "bsdf.Alpha"
+        and not _material_uses_texture_alpha(mat_ctx.blend_mode)
+    ):
+        return True
+
+    return False
+
+
+def _material_uses_texture_alpha(blend_mode: str | None) -> bool:
+    if blend_mode == "BLEND_Opaque (0)":
+        return False
+
+    return True
+
+
+def _extract_blend_mode(desc_ast: lark.Tree) -> str | None:
+    for child in desc_ast.children:
+        def_name, _, value = child.children
+        if def_name != "BasePropertyOverrides" or value.data != "structured_block":
+            continue
+
+        for prop_override_entry in value.children:
+            prop_name, _, prop_value = prop_override_entry.children
+            if prop_name.value == "BlendMode":
+                return prop_value.children[0].value.strip()
+
+    return None
 
 
 def _configure_image_color_space(img_node: bpy.types.ShaderNodeTexImage,
