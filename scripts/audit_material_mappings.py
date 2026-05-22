@@ -284,7 +284,7 @@ def audit_material_ref(map_path: str,
             has_diffuse = True
         if _rule_feeds_ao(rule):
             has_ao = True
-        if _rule_feeds_alpha(rule):
+        if _rule_feeds_alpha(rule, blend_mode):
             has_alpha_source = True
         if not tex_ref or tex_ref.strip().lower() == "none":
             missing_texture_params.append(tex_param)
@@ -293,7 +293,7 @@ def audit_material_ref(map_path: str,
     row["unrecognized_texture_params"] = ";".join(unrecognized)
     row["missing_texture_params"] = ";".join(missing_texture_params)
     row["shader_plan"] = _shader_plan_from_blend(blend_mode)
-    row["node_summary"] = _node_summary_for_rules(rule_set, texture_infos, has_ao)
+    row["node_summary"] = _node_summary_for_rules(rule_set, texture_infos, has_ao, blend_mode)
 
     fallback_reasons = []
     suggestions = []
@@ -404,9 +404,12 @@ def _rule_feeds_ao(rule: material_rules.TextureRule) -> bool:
     return any(connection.target == "ao_mix.Color2" for connection in rule.connections)
 
 
-def _rule_feeds_alpha(rule: material_rules.TextureRule) -> bool:
+def _rule_feeds_alpha(rule: material_rules.TextureRule, blend_mode: str | None) -> bool:
     alpha_targets = {"bsdf.Alpha", "mix_shader.Fac", "mix_shader.Factor"}
-    return any(connection.target in alpha_targets for connection in rule.connections)
+    return any(
+        connection.target in alpha_targets
+        for connection in _effective_rule_connections(rule, blend_mode)
+    )
 
 
 def _looks_like_intentional_constant_material(material_name: str, parent_reference: str | None) -> bool:
@@ -426,7 +429,8 @@ def _shader_plan_from_blend(blend_mode: str | None) -> str:
 
 def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
                             texture_infos: dict[str, str],
-                            has_ao: bool) -> str:
+                            has_ao: bool,
+                            blend_mode: str | None) -> str:
     parts = []
     if texture_infos:
         for tex_param, tex_ref in sorted(texture_infos.items()):
@@ -434,11 +438,30 @@ def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
             rule = rule_set.resolve(tex_param, tex_short_name)
             if rule is None:
                 continue
-            for connection in rule.connections:
+            for connection in _effective_rule_connections(rule, blend_mode):
                 parts.append(f"{tex_param}:{connection.source}->{connection.target}")
 
     parts.append(_principled_summary(has_ao=has_ao))
     return ";".join(parts)
+
+
+def _effective_rule_connections(rule: material_rules.TextureRule,
+                                blend_mode: str | None) -> list[material_rules.ConnectionSpec]:
+    return [
+        connection for connection in rule.connections
+        if not _skip_rule_connection(rule, connection, blend_mode)
+    ]
+
+
+def _skip_rule_connection(rule: material_rules.TextureRule,
+                          connection: material_rules.ConnectionSpec,
+                          blend_mode: str | None) -> bool:
+    return (
+        rule.diffuse
+        and blend_mode == "BLEND_Opaque (0)"
+        and connection.source == "image.Alpha"
+        and connection.target == "bsdf.Alpha"
+    )
 
 
 def _principled_summary(has_ao: bool) -> str:

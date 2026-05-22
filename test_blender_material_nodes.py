@@ -16,6 +16,14 @@ WATER_MATERIAL = (
     r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
     r"\MI_Envi_Wlbl_Water_01.props.txt"
 )
+MOUSE_MATERIAL = (
+    r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
+    r"\MI_Envi_Wlbl_Mouse_02a.props.txt"
+)
+DESK_MATERIAL = (
+    r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
+    r"\MI_Envi_Wlbl_Desk_03.props.txt"
+)
 
 
 class MaterialNodeImporter:
@@ -62,12 +70,32 @@ def main():
             asset_library_dir=TEST_ROOT,
             game_profile="generic",
         )
+        importer._import_material_to_library(
+            material_name="MI_Envi_Wlbl_Mouse_02a",
+            material_path_local=MOUSE_MATERIAL,
+            db=db,
+            umodel_export_dir=EXPORT_DIR,
+            asset_library_dir=TEST_ROOT,
+            game_profile="generic",
+        )
+        importer._import_material_to_library(
+            material_name="MI_Envi_Wlbl_Desk_03",
+            material_path_local=DESK_MATERIAL,
+            db=db,
+            umodel_export_dir=EXPORT_DIR,
+            asset_library_dir=TEST_ROOT,
+            game_profile="generic",
+        )
 
         glass = _load_material(os.path.join(TEST_ROOT, GLASS_MATERIAL[:-len(".props.txt")] + ".blend"))
         water = _load_material(os.path.join(TEST_ROOT, WATER_MATERIAL[:-len(".props.txt")] + ".blend"))
+        mouse = _load_material(os.path.join(TEST_ROOT, MOUSE_MATERIAL[:-len(".props.txt")] + ".blend"))
+        desk = _load_material(os.path.join(TEST_ROOT, DESK_MATERIAL[:-len(".props.txt")] + ".blend"))
 
         _assert_glass_material(glass, expected_mix=True)
         _assert_glass_material(water, expected_mix=False)
+        _assert_opaque_diffuse_alpha_ignored(mouse)
+        _assert_opaque_diffuse_alpha_ignored(desk)
 
         print("TEST_BLENDER_MATERIAL_NODES_OK")
     finally:
@@ -113,9 +141,26 @@ def _assert_glass_material(material, expected_mix):
         raise AssertionError(f"{material.name} output surface is not linked.")
 
 
+def _assert_opaque_diffuse_alpha_ignored(material):
+    node_types = {node.bl_idname for node in material.node_tree.nodes}
+    if "ShaderNodeBsdfPrincipled" not in node_types:
+        raise AssertionError(f"{material.name} should keep a Principled BSDF.")
+    if "ShaderNodeMix" not in node_types:
+        raise AssertionError(f"{material.name} should keep AO multiply when ORM provides AO.")
+
+    bsdf = next(node for node in material.node_tree.nodes if node.bl_idname == "ShaderNodeBsdfPrincipled")
+    alpha_input = bsdf.inputs.get("Alpha")
+    if alpha_input is not None and alpha_input.is_linked:
+        raise AssertionError(f"{material.name} opaque diffuse alpha should not feed BSDF alpha.")
+
+
 if __name__ == "__main__":
     if not os.path.exists(os.path.join(EXPORT_DIR, GLASS_MATERIAL)):
         raise SystemExit(f"Missing test fixture: {os.path.join(EXPORT_DIR, GLASS_MATERIAL)}")
     if not os.path.exists(os.path.join(EXPORT_DIR, WATER_MATERIAL)):
         raise SystemExit(f"Missing test fixture: {os.path.join(EXPORT_DIR, WATER_MATERIAL)}")
+    if not os.path.exists(os.path.join(EXPORT_DIR, MOUSE_MATERIAL)):
+        raise SystemExit(f"Missing test fixture: {os.path.join(EXPORT_DIR, MOUSE_MATERIAL)}")
+    if not os.path.exists(os.path.join(EXPORT_DIR, DESK_MATERIAL)):
+        raise SystemExit(f"Missing test fixture: {os.path.join(EXPORT_DIR, DESK_MATERIAL)}")
     main()
