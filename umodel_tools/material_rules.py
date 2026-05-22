@@ -1,0 +1,126 @@
+"""Config-backed texture rule helpers for game profiles."""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+import typing as t
+
+
+@dataclasses.dataclass(frozen=True)
+class NodeSpec:
+    name: str
+    node_type: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ConnectionSpec:
+    source: str
+    target: str
+
+
+@dataclasses.dataclass(frozen=True)
+class TextureRule:
+    name: str
+    diffuse: bool
+    prefer_suffix: bool
+    param_names: frozenset[str]
+    suffixes: frozenset[str]
+    nodes: tuple[NodeSpec, ...]
+    connections: tuple[ConnectionSpec, ...]
+
+    def matches_param(self, tex_type: str) -> bool:
+        return _normalize_token(tex_type) in self.param_names
+
+    def matches_suffix(self, tex_short_name: str) -> bool:
+        return _texture_suffix(tex_short_name) in self.suffixes
+
+
+class MaterialRuleSet:
+    def __init__(self, rules: t.Sequence[TextureRule]) -> None:
+        self.rules = tuple(rules)
+
+    def resolve(self, tex_type: str, tex_short_name: str) -> TextureRule | None:
+        suffix_matches = [rule for rule in self.rules if rule.matches_suffix(tex_short_name)]
+        for rule in suffix_matches:
+            if rule.prefer_suffix:
+                return rule
+
+        for rule in self.rules:
+            if rule.matches_param(tex_type):
+                return rule
+
+        return suffix_matches[0] if suffix_matches else None
+
+
+def load_rule_set(rule_path: str) -> MaterialRuleSet:
+    try:
+        import yaml  # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        raise RuntimeError("PyYAML is required to load material rule YAML files.") from exc
+
+    with open(rule_path, mode="r", encoding="utf-8") as rule_file:
+        data = yaml.safe_load(rule_file) or {}
+
+    raw_rules = data.get("texture_rules", [])
+    if not isinstance(raw_rules, list):
+        raise RuntimeError(f"Material rule file {rule_path} must define texture_rules as a list.")
+
+    return MaterialRuleSet([_parse_texture_rule(raw_rule, rule_path) for raw_rule in raw_rules])
+
+
+def default_rule_path(name: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "game_profiles", "rules", f"{name}.yaml")
+
+
+def _parse_texture_rule(raw_rule: t.Any, rule_path: str) -> TextureRule:
+    if not isinstance(raw_rule, dict):
+        raise RuntimeError(f"Material rule entries in {rule_path} must be mappings.")
+
+    name = str(raw_rule.get("name", "")).strip()
+    if not name:
+        raise RuntimeError(f"Material rule entries in {rule_path} must have a name.")
+
+    match = raw_rule.get("match", {})
+    if not isinstance(match, dict):
+        raise RuntimeError(f"Material rule {name!r} in {rule_path} has an invalid match block.")
+
+    nodes = raw_rule.get("nodes", {})
+    if nodes is None:
+        nodes = {}
+    if not isinstance(nodes, dict):
+        raise RuntimeError(f"Material rule {name!r} in {rule_path} has an invalid nodes block.")
+
+    connections = raw_rule.get("connections", [])
+    if not isinstance(connections, list):
+        raise RuntimeError(f"Material rule {name!r} in {rule_path} has an invalid connections block.")
+
+    return TextureRule(
+        name=name,
+        diffuse=bool(raw_rule.get("diffuse", False)),
+        prefer_suffix=bool(raw_rule.get("prefer_suffix", False)),
+        param_names=frozenset(_normalize_token(value) for value in match.get("param_names", [])),
+        suffixes=frozenset(_normalize_token(value) for value in match.get("suffixes", [])),
+        nodes=tuple(NodeSpec(str(node_name), str(node_type)) for node_name, node_type in nodes.items()),
+        connections=tuple(_parse_connection(connection, name, rule_path) for connection in connections),
+    )
+
+
+def _parse_connection(raw_connection: t.Any, rule_name: str, rule_path: str) -> ConnectionSpec:
+    if not isinstance(raw_connection, dict):
+        raise RuntimeError(f"Connection entries in rule {rule_name!r} from {rule_path} must be mappings.")
+
+    source = str(raw_connection.get("from", "")).strip()
+    target = str(raw_connection.get("to", "")).strip()
+    if not source or not target:
+        raise RuntimeError(f"Connection entries in rule {rule_name!r} from {rule_path} need from/to values.")
+
+    return ConnectionSpec(source=source, target=target)
+
+
+def _texture_suffix(tex_short_name: str) -> str:
+    return _normalize_token(tex_short_name).rsplit("_", maxsplit=1)[-1]
+
+
+def _normalize_token(value: t.Any) -> str:
+    return str(value).strip().lower()

@@ -1,0 +1,170 @@
+name: Generic
+description: Common Unreal material texture rules.
+
+texture_rules:
+  - name: diffuse
+    diffuse: true
+    match:
+      param_names:
+        - d
+        - bc
+        - base color
+        - basecolor
+        - basecolor_low
+        - diffuse
+        - diffuse map
+        - maintexture
+      suffixes:
+        - d
+        - bc
+        - basecolor
+        - basecolour
+        - diffuse
+        - albedo
+    connections:
+      - from: image.Color
+        to: ao_mix.Color1
+      - from: image.Alpha
+        to: bsdf.Alpha
+
+  - name: normal
+    match:
+      param_names:
+        - n
+        - normal
+        - normal map
+        - normalmap
+        - normalmapa
+        - normalmapb
+      suffixes:
+        - n
+        - normal
+        - normalmap
+    nodes:
+      normal_map: ShaderNodeNormalMap
+    connections:
+      - from: normal_map.Normal
+        to: bsdf.Normal
+      - from: image.Color
+        to: normal_map.Color
+
+  - name: orm
+    prefer_suffix: true
+    match:
+      param_names:
+        - orm
+      suffixes:
+        - orm
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: ao_mix.Color2
+      - from: split.Green
+        to: bsdf.Roughness
+      - from: split.Blue
+        to: bsdf.Metallic
+      - from: image.Color
+        to: split.Color
+
+  - name: rmo
+    prefer_suffix: true
+    match:
+      param_names:
+        - rmo
+      suffixes:
+        - rmo
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: bsdf.Roughness
+      - from: split.Green
+        to: bsdf.Metallic
+      - from: split.Blue
+        to: ao_mix.Color2
+      - from: image.Color
+        to: split.Color
+
+  - name: rm
+    prefer_suffix: true
+    match:
+      param_names:
+        - rm
+      suffixes:
+        - rm
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: bsdf.Roughness
+      - from: split.Green
+        to: bsdf.Metallic
+      - from: image.Color
+        to: split.Color
+
+  - name: sro
+    prefer_suffix: true
+    match:
+      param_names:
+        - sro
+      suffixes:
+        - sro
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: bsdf.Specular
+      - from: split.Green
+        to: bsdf.Roughness
+      - from: split.Blue
+        to: ao_mix.Color2
+      - from: image.Color
+        to: split.Color
+
+  - name: mroh
+    prefer_suffix: true
+    match:
+      param_names:
+        - mroh
+        - mroh/sroh
+      suffixes:
+        - mroh
+        - sroh
+    nodes:
+      split: ShaderNodeSeparateColor
+      displacement: ShaderNodeDisplacement
+    connections:
+      - from: split.Red
+        to: bsdf.Metallic
+      - from: split.Green
+        to: bsdf.Roughness
+      - from: split.Blue
+        to: ao_mix.Color2
+      - from: image.Color
+        to: split.Color
+      - from: displacement.Displacement
+        to: output.Displacement
+      - from: image.Alpha
+        to: displacement.Height
+
+  - name: mro
+    prefer_suffix: true
+    match:
+      param_names:
+        - mro
+        - mro/sro
+      suffixes:
+        - mro
+        - mroa
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: bsdf.Metallic
+      - from: split.Green
+        to: bsdf.Roughness
+      - from: split.Blue
+        to: ao_mix.Color2
+      - from: image.Color
+        to: split.Color

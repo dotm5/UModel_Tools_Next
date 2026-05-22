@@ -1,9 +1,9 @@
 import typing as t
 import io
 import os
-import traceback
 import shutil
 import contextlib
+import dataclasses
 
 from io_import_scene_unreal_psa_psk_280 import pskimport  # pylint: disable=import-error
 import bpy
@@ -15,6 +15,48 @@ from . import props_txt_parser
 from . import game_profiles
 from . import umodel_path_resolver
 from . import localization
+from . import missing_asset_report
+
+
+LINKED_ASSET_LIBRARY = "LINKED_ASSET_LIBRARY"
+LOCAL_SINGLE_FILE = "LOCAL_SINGLE_FILE"
+APPEND_AS_LOCAL = "APPEND_AS_LOCAL"
+
+WARN_SKIP = "WARN_SKIP"
+USE_PLACEHOLDER = "USE_PLACEHOLDER"
+FAIL_IMPORT = "FAIL_IMPORT"
+
+
+@dataclasses.dataclass
+class ImportRuntimeStats:
+    storage_mode: str = LINKED_ASSET_LIBRARY
+    missing_mesh_count: int = 0
+    missing_material_count: int = 0
+    missing_texture_count: int = 0
+    skipped_instances: int = 0
+    imported_instance_count: int = 0
+    linked_object_count: int = 0
+    local_object_count: int = 0
+    linked_material_count: int = 0
+    local_material_count: int = 0
+
+    def summary(self) -> str:
+        return (
+            f"storage_mode={self.storage_mode}, "
+            f"linked_object_count={self.linked_object_count}, "
+            f"local_object_count={self.local_object_count}, "
+            f"local_material_count={self.local_material_count}, "
+            f"linked_material_count={self.linked_material_count}, "
+            f"missing_mesh_count={self.missing_mesh_count}, "
+            f"missing_material_count={self.missing_material_count}, "
+            f"missing_texture_count={self.missing_texture_count}, "
+            f"skipped_instances={self.skipped_instances}, "
+            f"imported_instance_count={self.imported_instance_count}"
+        )
+
+
+class AssetImportPolicyError(RuntimeError):
+    """Raised when a user-selected missing-asset policy requires import cancellation."""
 
 
 class AssetImporter:
@@ -50,6 +92,27 @@ class AssetImporter:
 
     _has_warnings: bool = False
     _path_resolve_stats: umodel_path_resolver.UModelPathResolveStats = umodel_path_resolver.UModelPathResolveStats()
+    _import_stats: ImportRuntimeStats = ImportRuntimeStats()
+    _missing_warning_paths: set[tuple[str, str]] = set()
+    _missing_warning_printed_count: int = 0
+    _local_loaded_assets: dict[str, bpy.types.Object] = {}
+    _missing_asset_reporter: missing_asset_report.MissingAssetReporter | None = None
+    _missing_asset_context: dict[str, t.Any] = {}
+    _last_missing_resolution: umodel_path_resolver.ResolvedUModelPath | None = None
+    _last_import_report: missing_asset_report.ImportReport = missing_asset_report.ImportReport()
+
+    def _reset_import_runtime_state(self) -> None:
+        self._unrecognized_texture_types.clear()
+        self._has_warnings = False
+        self._path_resolve_stats = umodel_path_resolver.UModelPathResolveStats()
+        self._import_stats = ImportRuntimeStats(storage_mode=getattr(self, "import_storage_mode", LINKED_ASSET_LIBRARY))
+        self._missing_warning_paths = set()
+        self._missing_warning_printed_count = 0
+        self._local_loaded_assets = {}
+        self._missing_asset_reporter = None
+        self._missing_asset_context = {}
+        self._last_missing_resolution = None
+        self._last_import_report = missing_asset_report.ImportReport()
 
     def _op_message(self, msg_type: t.Literal['INFO'] | t.Literal['ERROR'] | t.Literal['WARNING'], msg: str):
         """Print operator message and return the associated status-code.
@@ -77,6 +140,91 @@ class AssetImporter:
         self._has_warnings = True
         print(*args)
 
+    def _warn_missing_asset(self, asset_kind: str, asset_path: str, message: str) -> None:
+        key = (asset_kind, asset_path)
+        if key in self._missing_warning_paths:
+            self._has_warnings = True
+            return
+
+        self._missing_warning_paths.add(key)
+        if utils.preferences.get_addon_preferences().verbose:
+            self._warn_print(message)
+            self._missing_warning_printed_count += 1
+        else:
+            self._has_warnings = True
+
+    def _set_missing_asset_context(self, **kwargs: t.Any) -> None:
+        self._missing_asset_context = kwargs
+
+    def _record_missing_asset(
+        self,
+        resource_type: t.Literal["mesh", "material", "texture", "unknown"],
+        json_asset_path: str,
+        message: str,
+        fallback_used: str,
+        resolution: umodel_path_resolver.ResolvedUModelPath | None = None,
+        material_name: str = "",
+        texture_parameter_name: str = "",
+        component_name: str = "",
+    ) -> None:
+        self._has_warnings = True
+        reporter = self._missing_asset_reporter
+        if reporter is None:
+            self._warn_missing_asset(resource_type, json_asset_path, f"Warning: {message}")
+            return
+
+        resolution = resolution or self._last_missing_resolution
+        context = self._missing_asset_context
+        policy = self._missing_policy(resource_type) if resource_type in {"mesh", "material", "texture"} else ""
+        severity = "error" if policy == FAIL_IMPORT else "warning"
+        normalized_asset_path = (
+            resolution.normalized_asset_path
+            if resolution is not None and resolution.normalized_asset_path
+            else umodel_path_resolver.normalize_unreal_asset_path(json_asset_path)
+        )
+        attempted_extensions = (
+            resolution.attempted_extensions
+            if resolution is not None and resolution.attempted_extensions
+            else tuple()
+        )
+        expected_path = resolution.expected_path if resolution is not None else ""
+        resolved_candidate_count = resolution.resolved_candidate_count if resolution is not None else 0
+        resolution_status = resolution.status if resolution is not None else "missing_file"
+        if resolution_status == "unresolved":
+            resolution_status = "unresolved"
+
+        reporter.add(missing_asset_report.MissingAssetRecord(
+            resource_type=resource_type,
+            severity=severity,
+            policy=missing_asset_report.policy_label(policy, fallback_used),
+            json_asset_path=json_asset_path,
+            normalized_asset_path=normalized_asset_path,
+            attempted_extensions=attempted_extensions,
+            resolution_status=resolution_status,
+            expected_path=expected_path,
+            resolved_candidate_count=resolved_candidate_count,
+            actor_name=str(context.get("actor_name", "")),
+            actor_object_path=str(context.get("actor_object_path", "")),
+            component_name=component_name or str(context.get("component_name", "")),
+            component_object_path=str(context.get("component_object_path", "")),
+            instance_index=str(context.get("instance_index", "")),
+            material_name=material_name,
+            texture_parameter_name=texture_parameter_name,
+            fallback_used=fallback_used,
+            message=message,
+            path_inference_mode=getattr(self, "path_inference_mode", ""),
+        ))
+
+    def _missing_policy(self, asset_kind: t.Literal["mesh", "material", "texture"]) -> str:
+        attr_name = f"missing_{asset_kind}_policy"
+        default_policy = WARN_SKIP if asset_kind == "mesh" else USE_PLACEHOLDER
+        if getattr(self, "validation_preset", "") == "STRICT":
+            default_policy = FAIL_IMPORT
+        return getattr(self, attr_name, default_policy)
+
+    def _missing_policy_fails(self, asset_kind: t.Literal["mesh", "material", "texture"]) -> bool:
+        return self._missing_policy(asset_kind) == FAIL_IMPORT
+
     def _print_unrecognized_textures(self) -> None:
         """Print all unrecognized texture map names found. Useful for adding support for new games.
         """
@@ -88,9 +236,13 @@ class AssetImporter:
     def _get_path_inference_settings(self) -> umodel_path_resolver.UModelPathInferenceSettings:
         prefs = utils.preferences.get_addon_preferences()
         return umodel_path_resolver.UModelPathInferenceSettings(
-            enable_umodel_path_inference=getattr(prefs, "enable_umodel_path_inference", True),
-            path_inference_mode=getattr(prefs, "path_inference_mode", umodel_path_resolver.BASIC_DEFAULT),
-            enable_suffix_index=getattr(prefs, "enable_suffix_index", True),
+            enable_umodel_path_inference=getattr(
+                self, "enable_umodel_path_inference", getattr(prefs, "enable_umodel_path_inference", True)
+            ),
+            path_inference_mode=getattr(
+                self, "path_inference_mode", getattr(prefs, "path_inference_mode", umodel_path_resolver.BASIC_DEFAULT)
+            ),
+            enable_suffix_index=getattr(self, "enable_suffix_index", getattr(prefs, "enable_suffix_index", True)),
         )
 
     def _resolve_umodel_path(self,
@@ -149,13 +301,24 @@ class AssetImporter:
         """
         asset_path_abs_no_ext = os.path.join(asset_dir, os.path.splitext(asset_path)[0])
         asset_path_abs = asset_path_abs_no_ext + '.blend'
+        storage_mode = getattr(self, "import_storage_mode", LINKED_ASSET_LIBRARY)
 
         try:
+            if os.path.isfile(asset_path_abs) and self._is_asset_cache_stale(
+                asset_path_abs=asset_path_abs,
+                asset_path=asset_path,
+                umodel_export_dir=umodel_export_dir,
+            ):
+                os.remove(asset_path_abs)
+
             if not os.path.isfile(asset_path_abs):
                 self._import_asset_to_library(context=context, asset_library_dir=asset_dir, asset_path=asset_path,
                                               umodel_export_dir=umodel_export_dir, db=db, game_profile=game_profile)
 
             if load:
+                if storage_mode in {LOCAL_SINGLE_FILE, APPEND_AS_LOCAL}:
+                    return self._load_asset_as_local(asset_path_abs)
+
                 if (linked_data := utils.linked_libraries_search(asset_path_abs, bpy.types.Object)):
                     return linked_data
 
@@ -168,9 +331,112 @@ class AssetImporter:
 
             return None
 
-        except (RuntimeError, FileNotFoundError):
-            traceback.print_exc()
+        except FileNotFoundError:
             return None
+
+    def _is_asset_cache_stale(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
+        source_paths = self._asset_cache_source_paths(
+            asset_path=asset_path,
+            umodel_export_dir=umodel_export_dir,
+        )
+        if not source_paths:
+            return False
+
+        cache_mtime = os.path.getmtime(asset_path_abs)
+        stale_sources = [
+            source_path for source_path in source_paths
+            if os.path.isfile(source_path) and os.path.getmtime(source_path) > cache_mtime
+        ]
+        if not stale_sources:
+            return False
+
+        utils.verbose_print(
+            f"Rebuilding stale asset cache {asset_path_abs}; newer source file: {stale_sources[0]}"
+        )
+        return True
+
+    def _asset_cache_source_paths(self, asset_path: str, umodel_export_dir: str) -> list[str]:
+        source_paths: list[str] = []
+        asset_path_local_noext = os.path.splitext(asset_path)[0]
+
+        mesh_resolved = self._resolve_umodel_path(
+            umodel_export_dir=umodel_export_dir,
+            asset_path=asset_path_local_noext,
+            extensions=('.pskx', '.psk'),
+        )
+        if mesh_resolved.found and mesh_resolved.path is not None:
+            source_paths.append(mesh_resolved.path)
+
+        mesh_props = self._resolve_umodel_path(
+            umodel_export_dir=umodel_export_dir,
+            asset_path=asset_path_local_noext,
+            extensions=('.props.txt',),
+        )
+        if not mesh_props.found or mesh_props.path is None:
+            return source_paths
+
+        source_paths.append(mesh_props.path)
+        try:
+            _, material_descriptor_paths = props_txt_parser.parse_props_txt(mesh_props.path, mode='MESH')
+        except OSError:
+            return source_paths
+
+        for mat_desc_path in material_descriptor_paths:
+            material_path_local_no_ext, _material_name = os.path.splitext(mat_desc_path)
+            material_path_local_no_ext = os.path.normpath(material_path_local_no_ext)
+            if material_path_local_no_ext.startswith(os.sep):
+                material_path_local_no_ext = material_path_local_no_ext[1:]
+
+            material_props = self._resolve_umodel_path(
+                umodel_export_dir=umodel_export_dir,
+                asset_path=material_path_local_no_ext + '.props.txt',
+                extensions=('.props.txt',),
+            )
+            if material_props.found and material_props.path is not None:
+                source_paths.append(material_props.path)
+
+        return source_paths
+
+    def _load_asset_as_local(self, asset_path_abs: str) -> bpy.types.Object:
+        if asset_path_abs in self._local_loaded_assets:
+            return self._local_loaded_assets[asset_path_abs]
+
+        with utils.redirect_cstdout():
+            with bpy.data.libraries.load(asset_path_abs, link=False) as (data_from, data_to):
+                data_to.objects = list(data_from.objects)
+                assert len(data_to.objects) == 1
+
+        obj = self._make_object_editable_local(data_to.objects[0])
+        self._local_loaded_assets[asset_path_abs] = obj
+        return obj
+
+    def _make_object_editable_local(self, obj: bpy.types.Object) -> bpy.types.Object:
+        if obj.library is not None:
+            obj = obj.copy()
+
+        if obj.data is not None and getattr(obj.data, "library", None) is not None:
+            obj.data = obj.data.copy()
+
+        if obj.type == "MESH" and obj.data is not None:
+            for idx, mat in enumerate(obj.data.materials):
+                if mat is None:
+                    continue
+
+                local_mat = mat.copy() if mat.library is not None else mat
+                self._localize_material_images(local_mat)
+                obj.data.materials[idx] = local_mat
+
+        return obj
+
+    @staticmethod
+    def _localize_material_images(mat: bpy.types.Material) -> None:
+        if mat.node_tree is None:
+            return
+
+        for node in mat.node_tree.nodes:
+            image = getattr(node, "image", None)
+            if image is not None and image.library is not None:
+                node.image = image.copy()
 
     def _import_image_to_library(self,
                                  tex_path: str,
@@ -234,6 +500,7 @@ class AssetImporter:
             extensions=('.props.txt',),
         )
         if not material_props.found or material_props.path is None:
+            self._last_missing_resolution = material_props
             raise FileNotFoundError(
                 f"Material descriptor {material_path_local} was not found in the UModel export path."
             )
@@ -352,8 +619,21 @@ class AssetImporter:
                                                   tex_umodel_path=tex_path_resolved.path,
                                                   db=db)
                 else:
-                    self._warn_print(f"Warning: Material \"{material_name}\" referenced texture \"{tex_path}\" "
-                                     ", but it does not exist in the UModel export path.")
+                    self._import_stats.missing_texture_count += 1
+                    msg = (f"Warning: Material \"{material_name}\" referenced texture \"{tex_path}\", "
+                           "but it does not exist in the UModel export path.")
+                    self._record_missing_asset(
+                        resource_type="texture",
+                        json_asset_path=tex_path,
+                        message=msg,
+                        fallback_used="placeholder_color",
+                        resolution=tex_path_resolved,
+                        material_name=material_name,
+                        texture_parameter_name=tex_type,
+                        component_name=tex_type,
+                    )
+                    if self._missing_policy_fails("texture"):
+                        raise AssetImportPolicyError(msg)
                     continue
 
             if (img := utils.linked_libraries_search(tex_lib_blend_path, bpy.types.Image)) is None:
@@ -433,36 +713,45 @@ class AssetImporter:
             extensions=('.pskx', '.psk'),
         )
 
-        if psk_resolved.found and psk_resolved.path is not None and psk_resolved.path.endswith('.pskx'):
-            pskx_path = psk_resolved.path
-            utils.verbose_print(f"Importing \"{pskx_path}\"")
+        found_path: str | None = None
+        animated = False
 
-            with contextlib.redirect_stdout(io.StringIO()):
-                if not pskimport(filepath=pskx_path,
-                                 context=context,
-                                 bImportbone=False):
-                    raise RuntimeError(f"Error: Failed importing asset {asset_psk_path_noext + '.pskx'} "
-                                       "due to unknown reason.")
+        if psk_resolved.found and psk_resolved.path is not None:
+            if psk_resolved.path.endswith('.pskx'):
+                found_path = psk_resolved.path
+            elif psk_resolved.path.endswith('.psk'):
+                found_path = psk_resolved.path
+                animated = True
 
-            animated = False
-        elif psk_resolved.found and psk_resolved.path is not None and psk_resolved.path.endswith('.psk'):
-            psk_path = psk_resolved.path
-            utils.verbose_print(f"Importing \"{psk_path}\"")
+        if found_path is None:
+            lod0_base_path = asset_psk_path_noext + '_LOD0'
+            lod0_resolved = self._resolve_umodel_path(
+                umodel_export_dir=umodel_export_dir,
+                asset_path=lod0_base_path,
+                extensions=('.pskx', '.psk'),
+            )
+            if lod0_resolved.found and lod0_resolved.path is not None:
+                found_path = lod0_resolved.path
+                animated = found_path.endswith('.psk')
+                utils.verbose_print(f"Info: Exact file not found, using LOD0 fallback: \"{found_path}\"")
 
-            with contextlib.redirect_stdout(io.StringIO()):
-                if not pskimport(filepath=psk_path,
-                                 context=context,
-                                 bImportbone=False):
-                    raise RuntimeError(f"Error: Failed importing asset {asset_psk_path_noext + '.psk'} "
-                                       "due to unknown reason.")
-            animated = True
-
-        else:
+        if found_path is None:
+            self._last_missing_resolution = psk_resolved
             raise FileNotFoundError(f"Error: Failed importing asset: {asset_psk_path_noext} was not found "
-                                    "(.psk/.pskx).")
+                                    "(.psk/.pskx, also tried _LOD0 suffix).")
+
+        utils.verbose_print(f"Importing \"{found_path}\"")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            if not pskimport(filepath=found_path,
+                             context=context,
+                             bImportbone=False):
+                raise RuntimeError(f"Error: Failed importing asset {found_path} due to unknown reason.")
 
         obj = context.object
-        asset_psk_path_noext = os.path.splitext(psk_resolved.path)[0] if psk_resolved.path else asset_psk_path_noext
+        asset_psk_path_noext = os.path.splitext(found_path)[0]
+        if asset_psk_path_noext.endswith('_LOD0'):
+            asset_psk_path_noext = asset_psk_path_noext[:-5]
 
         # mark object as asset
         obj.asset_mark()
@@ -483,15 +772,26 @@ class AssetImporter:
                 raise OSError()
             _, mat_descriptors_paths = props_txt_parser.parse_props_txt(mesh_props.path,
                                                                         mode='MESH')
-        except OSError:
-            self._warn_print(f"Warning: Loading material descriptor {asset_psk_path_noext + '.props.txt'} failed. "
-                             "Materials will not be avaialble for the imported object.")
+        except OSError as exc:
+            self._import_stats.missing_material_count += 1
+            msg = (f"Warning: Loading material descriptor {asset_psk_path_noext + '.props.txt'} failed. "
+                   "Materials will not be avaialble for the imported object.")
+            self._record_missing_asset(
+                resource_type="material",
+                json_asset_path=asset_path_local_noext + '.props.txt',
+                message=msg,
+                fallback_used="placeholder_material",
+                resolution=mesh_props,
+                component_name="StaticMesh material descriptor",
+            )
+            if self._missing_policy_fails("material"):
+                raise AssetImportPolicyError(msg) from exc
         else:
             # attempt to obtain materials manually if descriptor is not available
             mat_desc_order_map = {mat.name: None for mat in obj.data.materials}
 
             if animated and not mat_descriptors_paths:
-                if os.path.isdir(mat_dir := os.path.join(os.path.dirname(psk_path), 'Materials')):
+                if os.path.isdir(mat_dir := os.path.join(os.path.dirname(found_path), 'Materials')):
                     for root, _, files in os.walk(mat_dir):
                         for file in files:
                             if not file.endswith('.props.txt'):
@@ -565,17 +865,43 @@ class AssetImporter:
                             new_mat = data_to.materials[0]
 
                 except FileNotFoundError as e:
+                    self._import_stats.missing_material_count += 1
+                    msg = f"Warning: Material \"{material_name}\" failed to load, placeholder used instead. ({e})."
+                    self._record_missing_asset(
+                        resource_type="material",
+                        json_asset_path=material_path_local,
+                        message=msg,
+                        fallback_used="placeholder_material",
+                        resolution=self._last_missing_resolution,
+                        material_name=material_name,
+                        component_name="Material slot",
+                    )
+                    if self._missing_policy_fails("material"):
+                        raise AssetImportPolicyError(
+                            f"Missing material \"{material_name}\" while importing \"{asset_path}\"."
+                        ) from e
                     new_mat = bpy.data.materials.new(
                         utils.normalize_ue_name(f"{material_name}_Placeholder", fallback="Material_Placeholder")
                     )
-                    self._warn_print(f"Warning: Material \"{material_name}\" failed to load, placeholder used instead. "
-                                     f"({e}).")
 
-                except OSError:
+                except OSError as exc:
+                    self._import_stats.missing_material_count += 1
+                    msg = f"Warning: Material \"{material_name}\" failed to load, placeholder used instead."
+                    self._record_missing_asset(
+                        resource_type="material",
+                        json_asset_path=material_path_local,
+                        message=msg,
+                        fallback_used="placeholder_material",
+                        material_name=material_name,
+                        component_name="Material slot",
+                    )
+                    if self._missing_policy_fails("material"):
+                        raise AssetImportPolicyError(
+                            f"Missing material \"{material_name}\" while importing \"{asset_path}\"."
+                        ) from exc
                     new_mat = bpy.data.materials.new(
                         utils.normalize_ue_name(f"{material_name}_Placeholder", fallback="Material_Placeholder")
                     )
-                    self._warn_print(f"Warning: Material \"{material_name}\" failed to load, placeholder used instead.")
 
                 new_materials.append((new_mat, material_name))
 

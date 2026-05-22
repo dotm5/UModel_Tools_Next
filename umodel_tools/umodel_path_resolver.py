@@ -53,6 +53,10 @@ class ResolvedUModelPath:
     relative_path: str | None
     status: t.Literal["exact", "inferred", "suffix", "unresolved", "ambiguous"]
     warnings: tuple[str, ...] = ()
+    normalized_asset_path: str = ""
+    attempted_extensions: tuple[str, ...] = ()
+    expected_path: str = ""
+    resolved_candidate_count: int = 0
 
     @property
     def found(self) -> bool:
@@ -61,11 +65,16 @@ class ResolvedUModelPath:
 
 def normalize_unreal_asset_path(asset_path: str) -> str:
     """Normalize UE-style asset paths into a portable relative filesystem path."""
-    path = os.path.splitext(asset_path)[0]
-    path = path.replace("\\", "/").strip()
+    path = asset_path.replace("\\", "/").strip()
 
     while path.startswith("/"):
         path = path[1:]
+
+    lower_path = path.lower()
+    for suffix in (".props.txt", ".uasset", ".umap", ".pskx", ".psk", ".png", ".dds", ".tga"):
+        if lower_path.endswith(suffix):
+            path = path[:-len(suffix)]
+            break
 
     return os.path.normpath(path)
 
@@ -175,36 +184,49 @@ def find_asset_by_suffix(
 ) -> ResolvedUModelPath:
     """Find a file by longest non-ambiguous suffix match."""
     index = build_export_asset_index(export_dir, extensions)
-    best_suffix = None
-    best_matches: list[str] = []
+    normalized_asset_path = normalize_unreal_asset_path(asset_path)
 
     for suffix in _suffixes_for_lookup(asset_path, extensions):
         matches = index.get(suffix, [])
         if not matches:
             continue
 
-        if best_suffix is None or suffix.count(os.sep) > best_suffix.count(os.sep):
-            best_suffix = suffix
-            best_matches = matches
-        elif suffix.count(os.sep) == best_suffix.count(os.sep):
-            best_matches.extend(match for match in matches if match not in best_matches)
+        matches = sorted(set(matches))
+        if len(matches) > 1:
+            warning = (
+                f"Ambiguous UModel suffix match for {asset_path!r}: "
+                f"{matches[:5]!r}"
+            )
+            return ResolvedUModelPath(
+                path=None,
+                relative_path=None,
+                status="ambiguous",
+                warnings=(warning,),
+                normalized_asset_path=normalized_asset_path,
+                attempted_extensions=tuple(extensions),
+                expected_path=_expected_path_with_extension(normalized_asset_path, extensions),
+                resolved_candidate_count=len(matches),
+            )
 
-    if not best_matches:
-        return ResolvedUModelPath(path=None, relative_path=None, status="unresolved")
-
-    best_matches = sorted(set(best_matches))
-    if len(best_matches) > 1:
-        warning = (
-            f"Ambiguous UModel suffix match for {asset_path!r}: "
-            f"{best_matches[:5]!r}"
+        rel_path = matches[0]
+        return ResolvedUModelPath(
+            path=os.path.join(export_dir, rel_path),
+            relative_path=rel_path,
+            status="suffix",
+            normalized_asset_path=normalized_asset_path,
+            attempted_extensions=tuple(extensions),
+            expected_path=_expected_path_with_extension(normalized_asset_path, extensions),
+            resolved_candidate_count=1,
         )
-        return ResolvedUModelPath(path=None, relative_path=None, status="ambiguous", warnings=(warning,))
 
-    rel_path = best_matches[0]
     return ResolvedUModelPath(
-        path=os.path.join(export_dir, rel_path),
-        relative_path=rel_path,
-        status="suffix",
+        path=None,
+        relative_path=None,
+        status="unresolved",
+        normalized_asset_path=normalized_asset_path,
+        attempted_extensions=tuple(extensions),
+        expected_path=_expected_path_with_extension(normalized_asset_path, extensions),
+        resolved_candidate_count=0,
     )
 
 
@@ -218,9 +240,10 @@ def resolve_umodel_export_asset_path(
     """Resolve an Unreal asset reference to a UModel-exported file."""
     settings = settings or UModelPathInferenceSettings()
     normalized_extensions = tuple(extensions)
+    normalized_asset_path = normalize_unreal_asset_path(asset_path)
     cache_key = (
         os.path.realpath(os.path.normpath(export_dir)),
-        normalize_unreal_asset_path(asset_path),
+        normalized_asset_path,
         normalized_extensions,
         settings.enable_umodel_path_inference,
         settings.path_inference_mode,
@@ -233,6 +256,7 @@ def resolve_umodel_export_asset_path(
         return resolved
 
     candidates = build_umodel_asset_path_candidates(asset_path, extensions, settings)
+    expected_path = candidates[0] if candidates else normalized_asset_path
     exact_candidates = set(candidates[:len(extensions)])
 
     for candidate in candidates:
@@ -243,6 +267,10 @@ def resolve_umodel_export_asset_path(
                 path=abs_candidate,
                 relative_path=candidate,
                 status=status,
+                normalized_asset_path=normalized_asset_path,
+                attempted_extensions=normalized_extensions,
+                expected_path=expected_path,
+                resolved_candidate_count=1,
             )
             _RESOLVE_CACHE[cache_key] = resolved
             _count_result(resolved, stats)
@@ -259,7 +287,15 @@ def resolve_umodel_export_asset_path(
             _count_result(resolved, stats)
             return resolved
 
-    resolved = ResolvedUModelPath(path=None, relative_path=None, status="unresolved")
+    resolved = ResolvedUModelPath(
+        path=None,
+        relative_path=None,
+        status="unresolved",
+        normalized_asset_path=normalized_asset_path,
+        attempted_extensions=normalized_extensions,
+        expected_path=expected_path,
+        resolved_candidate_count=0,
+    )
     _RESOLVE_CACHE[cache_key] = resolved
     _count_result(resolved, stats)
     return resolved
@@ -279,3 +315,7 @@ def _count_result(resolved: ResolvedUModelPath, stats: UModelPathResolveStats | 
         stats.ambiguous_count += 1
     else:
         stats.unresolved_count += 1
+
+
+def _expected_path_with_extension(normalized_asset_path: str, extensions: t.Sequence[str]) -> str:
+    return os.path.normpath(normalized_asset_path + extensions[0]) if extensions else normalized_asset_path

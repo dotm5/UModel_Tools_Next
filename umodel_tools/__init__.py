@@ -18,8 +18,6 @@
 
 import os
 import sys
-import traceback
-
 import bpy
 
 
@@ -37,8 +35,8 @@ from . import localization  # nopep8 pylint: disable=wrong-import-position
 bl_info = {
     "name": "UModel Tools",
     "author": "Skarn",
-    "version": (1, 0),
-    "blender": (3, 40, 0),
+    "version": (1, 1, 0),
+    "blender": (5, 1, 0),
     "description": "Import Unreal Engine game scenes and assets into Blender",
     "category": "Import-Export"
 }
@@ -50,19 +48,11 @@ PACKAGE_NAME = __package__
 def register():
     auto_load.init()
     localization.register_translations()
-
-    try:
-        auto_load.register()
-    except Exception:  # pylint: disable=broad-exception-caught
-        traceback.print_exc()
+    auto_load.register()
 
 
 def unregister():
-    try:
-        auto_load.unregister()
-    except Exception:  # pylint: disable=broad-exception-caught
-        traceback.print_exc()
-
+    auto_load.unregister()
     localization.unregister_translations()
 
 
