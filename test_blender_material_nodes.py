@@ -153,6 +153,12 @@ def _assert_opaque_diffuse_alpha_ignored(material):
     if alpha_input is not None and alpha_input.is_linked:
         raise AssertionError(f"{material.name} opaque diffuse alpha should not feed BSDF alpha.")
 
+    emission_strength = bsdf.inputs.get("Emission Strength")
+    if emission_strength is None or not emission_strength.is_linked:
+        raise AssertionError(f"{material.name} packed diffuse alpha should feed emission strength.")
+    if "ShaderNodeMath" not in node_types:
+        raise AssertionError(f"{material.name} should scale packed alpha by E_Level.")
+
 
 if __name__ == "__main__":
     if not os.path.exists(os.path.join(EXPORT_DIR, GLASS_MATERIAL)):

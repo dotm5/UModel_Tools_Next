@@ -293,7 +293,7 @@ def audit_material_ref(map_path: str,
     row["unrecognized_texture_params"] = ";".join(unrecognized)
     row["missing_texture_params"] = ";".join(missing_texture_params)
     row["shader_plan"] = _shader_plan_from_blend(blend_mode)
-    row["node_summary"] = _node_summary_for_rules(rule_set, texture_infos, has_ao, blend_mode)
+    row["node_summary"] = _node_summary_for_rules(rule_set, texture_infos, has_ao, blend_mode, scalars, vectors)
 
     fallback_reasons = []
     suggestions = []
@@ -430,7 +430,9 @@ def _shader_plan_from_blend(blend_mode: str | None) -> str:
 def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
                             texture_infos: dict[str, str],
                             has_ao: bool,
-                            blend_mode: str | None) -> str:
+                            blend_mode: str | None,
+                            scalars: dict[str, float],
+                            vectors: dict[str, props_txt_parser.Color]) -> str:
     parts = []
     if texture_infos:
         for tex_param, tex_ref in sorted(texture_infos.items()):
@@ -438,7 +440,11 @@ def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
             rule = rule_set.resolve(tex_param, tex_short_name)
             if rule is None:
                 continue
-            for connection in _effective_rule_connections(rule, blend_mode):
+            for connection in rule.connections:
+                if _skip_rule_connection(rule, connection, blend_mode):
+                    if _uses_packed_diffuse_alpha_emission(blend_mode, scalars, vectors):
+                        parts.append(f"{tex_param}:image.Alpha->bsdf.Emission Strength")
+                    continue
                 parts.append(f"{tex_param}:{connection.source}->{connection.target}")
 
     parts.append(_principled_summary(has_ao=has_ao))
@@ -461,6 +467,15 @@ def _skip_rule_connection(rule: material_rules.TextureRule,
         and blend_mode == "BLEND_Opaque (0)"
         and connection.source == "image.Alpha"
         and connection.target == "bsdf.Alpha"
+    )
+
+
+def _uses_packed_diffuse_alpha_emission(blend_mode: str | None,
+                                        scalars: dict[str, float],
+                                        vectors: dict[str, props_txt_parser.Color]) -> bool:
+    return (
+        blend_mode == "BLEND_Opaque (0)"
+        and ("e_level" in scalars or "e_color" in vectors)
     )
 
 

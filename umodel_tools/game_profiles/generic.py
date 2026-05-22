@@ -8,6 +8,7 @@ import lark
 
 from .. import utils
 from .. import material_rules
+from .. import props_txt_parser
 
 
 GAME_NAME = "Generic"
@@ -22,6 +23,8 @@ class MaterialContext:
     desc_ast: lark.Tree
     use_pbr: bool
     blend_mode: str | None
+    scalar_parameters: dict[str, float]
+    vector_parameters: dict[str, props_txt_parser.Color]
     linked_maps: set[str] = dataclasses.field(default_factory=set)
 
 
@@ -34,6 +37,8 @@ def process_material(mat: bpy.types.Material, desc_ast: lark.Tree, use_pbr: bool
         desc_ast=desc_ast,
         use_pbr=use_pbr,
         blend_mode=_extract_blend_mode(desc_ast),
+        scalar_parameters=props_txt_parser.extract_scalar_parameters(desc_ast),
+        vector_parameters=props_txt_parser.extract_vector_parameters(desc_ast),
     )
 
 
@@ -78,6 +83,7 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
 
     for connection in rule.connections:
         if _should_skip_connection(mat_ctx, rule, connection):
+            _route_packed_diffuse_alpha(mat, mat_ctx, img_node)
             continue
 
         source_socket = _resolve_socket(nodes, connection.source, "output")
@@ -151,6 +157,36 @@ def _material_uses_texture_alpha(blend_mode: str | None) -> bool:
         return False
 
     return True
+
+
+def _route_packed_diffuse_alpha(mat: bpy.types.Material,
+                                mat_ctx: MaterialContext,
+                                img_node: bpy.types.ShaderNodeTexImage) -> None:
+    if not _material_uses_packed_diffuse_alpha_emission(mat_ctx):
+        return
+
+    if mat_ctx.bsdf_node is None:
+        return
+
+    emission_color = mat_ctx.vector_parameters.get("e_color", (1.0, 1.0, 1.0, 1.0))
+    emission_level = max(mat_ctx.scalar_parameters.get("e_level", 1.0), 0.0)
+
+    color_socket = utils.get_bsdf_input(mat_ctx.bsdf_node, "Emission Color")
+    strength_socket = utils.get_bsdf_input(mat_ctx.bsdf_node, "Emission Strength")
+    utils.set_socket_value(color_socket, emission_color)
+
+    multiply = mat.node_tree.nodes.new("ShaderNodeMath")
+    multiply.operation = "MULTIPLY"
+    multiply.inputs[1].default_value = emission_level
+    mat.node_tree.links.new(img_node.outputs["Alpha"], multiply.inputs[0])
+    mat.node_tree.links.new(multiply.outputs[0], strength_socket)
+
+
+def _material_uses_packed_diffuse_alpha_emission(mat_ctx: MaterialContext) -> bool:
+    if mat_ctx.blend_mode != "BLEND_Opaque (0)":
+        return False
+
+    return "e_level" in mat_ctx.scalar_parameters or "e_color" in mat_ctx.vector_parameters
 
 
 def _extract_blend_mode(desc_ast: lark.Tree) -> str | None:

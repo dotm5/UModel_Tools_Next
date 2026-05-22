@@ -53,6 +53,8 @@ def main():
         raise AssertionError(f"Expected mouse material to be opaque: {mouse_row}")
     if "D:image.Alpha->bsdf.Alpha" in mouse_row["node_summary"]:
         raise AssertionError(f"Opaque packed diffuse alpha should not feed BSDF alpha: {mouse_row}")
+    if "D:image.Alpha->bsdf.Emission Strength" not in mouse_row["node_summary"]:
+        raise AssertionError(f"Opaque packed diffuse alpha should feed emission strength: {mouse_row}")
 
     suspicious_rows = [
         row for row in rows
