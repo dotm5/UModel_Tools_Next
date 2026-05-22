@@ -180,6 +180,8 @@ cython_debug/
 /test_runtime_local_single/
 /test_runtime_missing_report/
 /test_runtime_blender_icebase/
+/test_runtime_blender_cache_probe/
+/test_runtime_blender_wlbl/
 /test_localization.py
 /toTest/
 /package_work/
