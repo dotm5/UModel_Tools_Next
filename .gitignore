@@ -171,4 +171,10 @@ cython_debug/
 /probe_blender_api.py
 /probe_blender_api_output.json
 /probe_blender_i18n.py
+/diagnose_real_import.py
+/reference/*.zip
+/reference/diagnostics/
+/umodel_tools/last_import_params.json
+/test_runtime_local_single/
+/test_runtime_missing_report/
 /test_localization.py

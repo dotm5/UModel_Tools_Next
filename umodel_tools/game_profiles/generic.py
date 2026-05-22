@@ -1,7 +1,5 @@
-"""This module implements a generic algorithm to provide basic support to the majority of UE games.
-"""
+"""This module implements a config-backed generic material profile."""
 
-import enum
 import typing as t
 import dataclasses
 
@@ -9,32 +7,13 @@ import bpy
 import lark
 
 from .. import utils
+from .. import material_rules
 
 
 GAME_NAME = "Generic"
 GAME_DESCRIPTION = "Provides basic support for any Unreal Engine game"
 
-
-class TextureMapTypes(enum.Enum):
-    """All texture map types supported by the material generator.
-    """
-    Diffuse = enum.auto()
-    Normal = enum.auto()
-    SRO = enum.auto()
-    MROH = enum.auto()
-    MRO = enum.auto()
-
-
-#: Suffixes of textures for automatic texture purpose guessing (lowercase only)
-SUFFIX_MAP = {
-    'd': TextureMapTypes.Diffuse,
-    'n': TextureMapTypes.Normal,
-    'mro': TextureMapTypes.MRO,
-    'sro': TextureMapTypes.SRO,
-    'mroh': TextureMapTypes.MROH,
-    'mroa': TextureMapTypes.MRO,  # TODO: figure out what MROA means.
-    'sroh': TextureMapTypes.MROH,  # TODO: verify, just in case, if SROH is actually a thing.
-}
+RULE_SET = material_rules.load_rule_set(material_rules.default_rule_path("generic"))
 
 
 @dataclasses.dataclass
@@ -42,7 +21,7 @@ class MaterialContext:
     bsdf_node: t.Optional[bpy.types.ShaderNodeBsdfPrincipled | bpy.types.ShaderNodeBsdfDiffuse]
     desc_ast: lark.Tree
     use_pbr: bool
-    linked_maps: set[TextureMapTypes.Diffuse] = dataclasses.field(default_factory=set)
+    linked_maps: set[str] = dataclasses.field(default_factory=set)
 
 
 _state_buffer: dict[bpy.types.Material, MaterialContext] = {}
@@ -52,82 +31,64 @@ def process_material(mat: bpy.types.Material, desc_ast: lark.Tree, use_pbr: bool
     _state_buffer[mat] = MaterialContext(bsdf_node=None, desc_ast=desc_ast, use_pbr=use_pbr)
 
 
-def do_process_texture(tex_type: str, tex_short_name: str) -> bool:  # pylint: disable=unused-argument
-    return bool(_short_name_to_tex_type(tex_short_name))
+def do_process_texture(tex_type: str, tex_short_name: str) -> bool:
+    return _resolve_rule(tex_type, tex_short_name) is not None
 
 
-def is_diffuse_tex_type(tex_type: str, tex_short_name: str) -> bool:  # pylint: disable=unused-argument
-    return _short_name_to_tex_type(tex_short_name) == TextureMapTypes.Diffuse
+def is_diffuse_tex_type(tex_type: str, tex_short_name: str) -> bool:
+    rule = _resolve_rule(tex_type, tex_short_name)
+    return rule.diffuse if rule is not None else False
 
 
 def handle_material_texture_pbr(mat: bpy.types.Material,
-                                tex_type: str,  # pylint: disable=unused-argument
+                                tex_type: str,
                                 tex_short_name: str,
                                 img_node: bpy.types.ShaderNodeTexImage,
                                 ao_mix_node: bpy.types.ShaderNodeMix,
                                 bsdf_node: bpy.types.ShaderNodeBsdfPrincipled,
                                 out_node: bpy.types.ShaderNodeOutputMaterial):
-    # Note: we presume MROH and SRO are mutually exclusive and never appear together.
-    # This is not validated.
     mat_ctx = _state_buffer[mat]
     mat_ctx.bsdf_node = bsdf_node
 
-    bl_tex_type = _short_name_to_tex_type(tex_short_name)
+    rule = _resolve_rule(tex_type, tex_short_name)
+    if rule is None:
+        return
 
-    # do not connect the same texture twice
-    if bl_tex_type in mat_ctx.linked_maps:
+    # do not connect the same texture purpose twice
+    if rule.name in mat_ctx.linked_maps:
         return
 
     # remember that we processed a texture of that type
-    mat_ctx.linked_maps.add(bl_tex_type)
+    mat_ctx.linked_maps.add(rule.name)
 
-    match bl_tex_type:
-        case TextureMapTypes.Diffuse:
-            mat.node_tree.links.new(img_node.outputs['Color'], ao_mix_node.inputs[6])
-            mat.node_tree.links.new(img_node.outputs['Alpha'], utils.get_bsdf_input(bsdf_node, 'Alpha'))
-            img_node.select = True
-            mat.node_tree.nodes.active = img_node
+    nodes = _create_rule_nodes(mat, rule)
+    nodes.update({
+        "image": img_node,
+        "ao_mix": ao_mix_node,
+        "bsdf": bsdf_node,
+        "output": out_node,
+    })
 
-        case TextureMapTypes.Normal:
-            normal_map_node = mat.node_tree.nodes.new('ShaderNodeNormalMap')
-            mat.node_tree.links.new(normal_map_node.outputs['Normal'],
-                                    utils.get_bsdf_input(bsdf_node, 'Normal'))
-            mat.node_tree.links.new(img_node.outputs['Color'],
-                                    normal_map_node.inputs['Color'])
-        case TextureMapTypes.SRO:
-            sro_split = mat.node_tree.nodes.new('ShaderNodeSeparateColor')
-            mat.node_tree.links.new(sro_split.outputs['Red'], utils.get_bsdf_input(bsdf_node, 'Specular'))
-            mat.node_tree.links.new(sro_split.outputs['Green'], utils.get_bsdf_input(bsdf_node, 'Roughness'))
-            mat.node_tree.links.new(sro_split.outputs['Blue'], ao_mix_node.inputs[7])
-            mat.node_tree.links.new(img_node.outputs['Color'], sro_split.inputs['Color'])
-        case TextureMapTypes.MROH:
-            # MRO components
-            mroh_split = mat.node_tree.nodes.new('ShaderNodeSeparateColor')
-            mat.node_tree.links.new(mroh_split.outputs['Red'], utils.get_bsdf_input(bsdf_node, 'Metallic'))
-            mat.node_tree.links.new(mroh_split.outputs['Green'], utils.get_bsdf_input(bsdf_node, 'Roughness'))
-            mat.node_tree.links.new(mroh_split.outputs['Blue'], ao_mix_node.inputs[7])
-            mat.node_tree.links.new(img_node.outputs['Color'], mroh_split.inputs['Color'])
+    for connection in rule.connections:
+        source_socket = _resolve_socket(nodes, connection.source, "output")
+        target_socket = _resolve_socket(nodes, connection.target, "input")
+        if source_socket is not None and target_socket is not None:
+            mat.node_tree.links.new(source_socket, target_socket)
 
-            # height component
-            displacement_node = mat.node_tree.nodes.new('ShaderNodeDisplacement')
-            mat.node_tree.links.new(displacement_node.outputs['Displacement'],
-                                    out_node.inputs['Displacement'])
-            mat.node_tree.links.new(img_node.outputs['Alpha'],
-                                    displacement_node.inputs['Height'])
-        case TextureMapTypes.MRO:
-            mro_split = mat.node_tree.nodes.new('ShaderNodeSeparateColor')
-            mat.node_tree.links.new(mro_split.outputs['Red'], utils.get_bsdf_input(bsdf_node, 'Metallic'))
-            mat.node_tree.links.new(mro_split.outputs['Green'], utils.get_bsdf_input(bsdf_node, 'Roughness'))
-            mat.node_tree.links.new(mro_split.outputs['Blue'], ao_mix_node.inputs[7])
-            mat.node_tree.links.new(img_node.outputs['Color'], mro_split.inputs['Color'])
+    if rule.diffuse:
+        img_node.select = True
+        mat.node_tree.nodes.active = img_node
 
 
 def handle_material_texture_simple(mat: bpy.types.Material,
-                                   tex_type: str,  # pylint: disable=unused-argument
-                                   tex_short_name: str,  # pylint: disable=unused-argument
+                                   tex_type: str,
+                                   tex_short_name: str,
                                    img_node: bpy.types.ShaderNodeTexImage,
                                    bsdf_node: bpy.types.ShaderNodeBsdfDiffuse):
     _state_buffer[mat].bsdf_node = bsdf_node
+
+    if not is_diffuse_tex_type(tex_type, tex_short_name):
+        return
 
     mat.node_tree.links.new(img_node.outputs['Color'], bsdf_node.inputs['Color'])
     img_node.select = True
@@ -150,9 +111,48 @@ def end_process_material(mat: bpy.types.Material):
 
 # Non-interface functions below
 
-def _short_name_to_tex_type(tex_short_name: str) -> t.Optional[TextureMapTypes]:
-    """Convert short texture name to a recognized texture map type if possible.
+def _resolve_rule(tex_type: str, tex_short_name: str) -> material_rules.TextureRule | None:
+    return RULE_SET.resolve(tex_type, tex_short_name)
 
-    :return: TextureMapType or None.
-    """
-    return SUFFIX_MAP.get(tex_short_name.lower().split('_')[-1])
+
+def _create_rule_nodes(mat: bpy.types.Material, rule: material_rules.TextureRule) -> dict[str, bpy.types.Node]:
+    return {
+        node_spec.name: mat.node_tree.nodes.new(node_spec.node_type)
+        for node_spec in rule.nodes
+    }
+
+
+def _resolve_socket(nodes: dict[str, bpy.types.Node], path: str, direction: t.Literal["input", "output"]) -> t.Any:
+    node_name, socket_name = _split_socket_path(path)
+    node = nodes.get(node_name)
+    if node is None:
+        print(f"Warning: Material rule references unknown node {node_name!r}.")
+        return None
+
+    if node_name == "bsdf" and direction == "input":
+        return utils.get_bsdf_input(node, socket_name)
+    if node_name == "ao_mix":
+        return _resolve_ao_mix_socket(node, socket_name, direction)
+
+    sockets = node.inputs if direction == "input" else node.outputs
+    return sockets[socket_name]
+
+
+def _split_socket_path(path: str) -> tuple[str, str]:
+    node_name, socket_name = path.split(".", 1)
+    return node_name.strip(), socket_name.strip()
+
+
+def _resolve_ao_mix_socket(node: bpy.types.Node, socket_name: str, direction: t.Literal["input", "output"]) -> t.Any:
+    if direction == "output":
+        if socket_name == "Result":
+            return node.outputs[2]
+        return node.outputs[socket_name]
+
+    match socket_name:
+        case "Color1":
+            return node.inputs[6]
+        case "Color2":
+            return node.inputs[7]
+        case _:
+            return node.inputs[socket_name]

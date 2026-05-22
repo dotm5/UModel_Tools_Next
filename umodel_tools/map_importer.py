@@ -12,6 +12,7 @@ from . import asset_db
 from . import asset_importer
 from . import utils
 from . import localization
+from . import missing_asset_report
 
 
 def split_object_path(object_path):
@@ -137,6 +138,7 @@ class StaticMesh:
 
     entity_name: str = ""
     asset_path: str = ""
+    raw_object_path: str = ""
     transform: InstanceTransform
     instance_transforms: list[InstanceTransform]
     parent_mtx: t.Optional[mu.Matrix] = None
@@ -184,6 +186,7 @@ class StaticMesh:
             self.parent_mtx = get_parent_transform_matrix(json_obj, *parse_ue_object_name(obj_name))
 
         objpath = split_object_path(object_path)
+        self.raw_object_path = objpath
 
         self.asset_path = os.path.normpath(objpath + ".uasset")
         self.asset_path = self.asset_path[1:] if self.asset_path.startswith(os.sep) else self.asset_path
@@ -262,7 +265,10 @@ class StaticMesh:
         if self.is_instanced:
             for instance_trs in self.instance_transforms:
                 mat_world = trs.matrix_4x4 @ instance_trs.matrix_4x4
-                new_obj = bpy.data.objects.new(utils.normalize_ue_name(obj.name, fallback="StaticMesh"), object_data=obj.data)
+                new_obj = bpy.data.objects.new(
+                    utils.normalize_ue_name(obj.name, fallback="StaticMesh"),
+                    object_data=obj.data,
+                )
                 new_obj.rotation_mode = 'XYZ'
 
                 if self.parent_mtx is None:
@@ -274,7 +280,10 @@ class StaticMesh:
                 objects.append(new_obj)
 
         else:
-            new_obj = bpy.data.objects.new(utils.normalize_ue_name(obj.name, fallback="StaticMesh"), object_data=obj.data)
+            new_obj = bpy.data.objects.new(
+                utils.normalize_ue_name(obj.name, fallback="StaticMesh"),
+                object_data=obj.data,
+            )
 
             if self.parent_mtx is None:
                 new_obj.scale = (trs.scale[0], trs.scale[1], trs.scale[2])
@@ -288,6 +297,12 @@ class StaticMesh:
             objects.append(new_obj)
 
         return objects
+
+    @property
+    def expected_instance_count(self) -> int:
+        if self.invalid:
+            return 0
+        return len(self.instance_transforms) if self.is_instanced else 1
 
 
 class GameLight:
@@ -650,12 +665,34 @@ class MapImporter(asset_importer.AssetImporter):
             return False
 
         self._path_resolve_stats.reset()
+        self._import_stats.storage_mode = getattr(
+            self, "import_storage_mode", asset_importer.LINKED_ASSET_LIBRARY
+        )
 
         json_filename = utils.normalize_ue_name(os.path.basename(map_path), fallback="Imported_Map")
+        map_name_no_ext = os.path.splitext(os.path.basename(map_path))[0]
+        self._missing_asset_reporter = missing_asset_report.MissingAssetReporter(
+            map_name=map_name_no_ext,
+            export_dir=umodel_export_dir,
+            asset_dir=asset_dir,
+            save_report=getattr(self, "save_missing_asset_report", True),
+            report_format=getattr(self, "missing_asset_report_format", missing_asset_report.CSV),
+            max_console_records=getattr(self, "max_missing_assets_printed_to_console", 30),
+            deduplicate=getattr(self, "deduplicate_missing_assets", True),
+            directory_mode=getattr(
+                self,
+                "missing_asset_report_directory_mode",
+                missing_asset_report.DIRECTORY_UMODEL_EXPORT,
+            ),
+            custom_directory=getattr(self, "custom_missing_asset_report_directory", ""),
+            include_actor_context=getattr(self, "include_actor_context_in_missing_report", True),
+            verbose=utils.preferences.get_addon_preferences().verbose,
+        )
         import_collection = bpy.data.collections.new(json_filename)
 
         bpy.context.scene.collection.children.link(import_collection)
 
+        import_failed = False
         with open(map_path, mode='r', encoding='utf-8') as file:
             json_object = json.load(file)
 
@@ -669,6 +706,9 @@ class MapImporter(asset_importer.AssetImporter):
                                         file=orig_stdout,
                                         dynamic_ncols=True,
                                         ascii=True):
+                    if import_failed:
+                        break
+
                     if not entity.get('Type', None):
                         continue
 
@@ -677,26 +717,56 @@ class MapImporter(asset_importer.AssetImporter):
                     # static meshes
                     if entity_type in StaticMesh.static_mesh_types:
                         static_mesh = StaticMesh(json_object, entity, entity_type)
+                        self._set_missing_asset_context(
+                            actor_name=entity.get("Name", entity.get("Outer", "")),
+                            actor_object_path=entity.get("ObjectPath", ""),
+                            component_name=entity_type,
+                            component_object_path=static_mesh.raw_object_path,
+                            instance_index="",
+                        )
 
                         if static_mesh.invalid:
                             utils.verbose_print(f"Info: Skipping instance of {static_mesh.entity_name}. "
                                                 "Invalid property.")
                             continue
 
-                        if (obj := self._load_asset(
-                            context=context,
-                            asset_dir=asset_dir,
-                            asset_path=static_mesh.asset_path,
-                            umodel_export_dir=umodel_export_dir,
-                            load=True,
-                            db=db,
-                            game_profile=game_profile
-                        )) is None:
-                            self._warn_print(f"Warning: Skipping instance of {static_mesh.entity_name} due to import "
-                                             "failure.")
+                        try:
+                            obj = self._load_asset(
+                                context=context,
+                                asset_dir=asset_dir,
+                                asset_path=static_mesh.asset_path,
+                                umodel_export_dir=umodel_export_dir,
+                                load=True,
+                                db=db,
+                                game_profile=game_profile
+                            )
+                        except asset_importer.AssetImportPolicyError as exc:
+                            print(f"Error: {exc}")
+                            import_failed = True
+                            break
+
+                        if obj is None:
+                            skipped_count = static_mesh.expected_instance_count
+                            self._import_stats.missing_mesh_count += 1
+                            self._import_stats.skipped_instances += skipped_count
+                            msg = (f"Warning: Skipping {skipped_count} instance(s) of {static_mesh.entity_name} "
+                                   f"because mesh \"{static_mesh.asset_path}\" was not found.")
+                            self._record_missing_asset(
+                                resource_type="mesh",
+                                json_asset_path=static_mesh.raw_object_path or static_mesh.asset_path,
+                                message=msg,
+                                fallback_used="skipped_instance",
+                                resolution=self._last_missing_resolution,
+                                component_name=entity_type,
+                            )
+                            if self._missing_policy_fails("mesh"):
+                                print(f"Error: Missing mesh policy failed import for {static_mesh.asset_path}.")
+                                import_failed = True
+                                break
                             continue
 
-                        static_mesh.link_object_instance(obj, import_collection)
+                        imported_objects = static_mesh.link_object_instance(obj, import_collection)
+                        self._import_stats.imported_instance_count += len(imported_objects)
 
                     # lights
                     elif entity_type in GameLight.light_types:
@@ -709,10 +779,49 @@ class MapImporter(asset_importer.AssetImporter):
 
                         light.import_light(import_collection)
 
+        if import_failed:
+            self._finish_map_import_report(import_collection)
+            return False
+
         # TODO: required due to unknown reason, blender bug? Otherwise, some meshes have None materials.
         bpy.app.timers.register(self._library_reload, first_interval=0.010)
-        prefs = utils.preferences.get_addon_preferences()
-        if getattr(prefs, "report_path_resolution_stats", True):
+        if getattr(self, "report_path_resolution_stats", True):
             print(f"{localization.t_report('Path resolution summary')}: {self._path_resolve_stats.summary()}")
 
+        self._finish_map_import_report(import_collection)
+
         return True
+
+    def _finish_map_import_report(self, import_collection: bpy.types.Collection) -> missing_asset_report.ImportReport:
+        self._update_storage_counts(import_collection)
+        print(f"Import storage summary: {self._import_stats.summary()}")
+        report = missing_asset_report.ImportReport()
+        if self._missing_asset_reporter is not None:
+            report = self._missing_asset_reporter.finish()
+        self._last_import_report = report
+        return report
+
+    def _update_storage_counts(self, collection: bpy.types.Collection) -> None:
+        mesh_objects = [obj for obj in collection.objects if obj.type == "MESH"]
+        self._import_stats.linked_object_count += sum(
+            1 for obj in mesh_objects
+            if obj.library is not None or (obj.data is not None and obj.data.library is not None)
+        )
+        self._import_stats.local_object_count += sum(
+            1 for obj in mesh_objects
+            if obj.library is None and (obj.data is None or obj.data.library is None)
+        )
+
+        materials = {}
+        for obj in mesh_objects:
+            if obj.data is None:
+                continue
+            for mat in obj.data.materials:
+                if mat is not None:
+                    materials[mat.as_pointer()] = mat
+
+        self._import_stats.linked_material_count += sum(1 for mat in materials.values() if mat.library is not None)
+        self._import_stats.local_material_count += sum(1 for mat in materials.values() if mat.library is None)
+
+    def _print_import_summary(self) -> None:
+        print(f"Import storage summary: {self._import_stats.summary()}")

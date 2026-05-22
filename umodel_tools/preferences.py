@@ -5,6 +5,7 @@ import bpy
 from . import PACKAGE_NAME
 from . import game_profiles
 from . import localization
+from . import missing_asset_report
 
 
 def get_addon_preferences() -> 'UMODELTOOLS_AP_addon_preferences':
@@ -135,6 +136,122 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         default=False
     )
 
+    default_import_storage_mode: bpy.props.EnumProperty(
+        name="Default Import Storage Mode",
+        description="Default storage behavior for Unreal Map imports",
+        items=[
+            ('LINKED_ASSET_LIBRARY', "Linked Asset Library", "Reuse cached asset blend files as linked libraries"),
+            ('LOCAL_SINGLE_FILE', "Local Single File", "Append imported assets as editable local datablocks"),
+            ('APPEND_AS_LOCAL', "Append Asset Library as Local", "Use the asset cache, then append assets locally")
+        ],
+        default='LINKED_ASSET_LIBRARY'
+    )
+
+    editable_materials_by_default: bpy.props.BoolProperty(
+        name="Editable Materials by Default",
+        description="Suggest Local Single File mode for new map imports",
+        default=False
+    )
+
+    default_load_pbr_maps: bpy.props.BoolProperty(
+        name="Default Load PBR Textures",
+        description="Default whether map imports restore normal, roughness, specular, and related texture maps",
+        default=True
+    )
+
+    default_import_backface_culling: bpy.props.BoolProperty(
+        name="Default Use Backface Culling",
+        description="Default whether map imports preserve material backface culling settings",
+        default=False
+    )
+
+    default_texture_format: bpy.props.EnumProperty(
+        name="Default Texture Format",
+        description="Default texture file extension expected in the UModel export directory",
+        items=[
+            ('.png', '.png', '', 0),
+            ('.dds', '.dds', '', 1),
+            ('.tga', '.tga', '', 2)
+        ],
+        default='.png'
+    )
+
+    recent_umodel_export_dir: bpy.props.StringProperty(
+        name="Recent UModel Export Directory",
+        description="Most recent UModel export directory used from File > Import",
+        subtype='DIR_PATH'
+    )
+
+    recent_asset_cache_dir: bpy.props.StringProperty(
+        name="Recent Asset Cache Directory",
+        description="Most recent asset cache directory used from File > Import",
+        subtype='DIR_PATH'
+    )
+
+    manual_asset_cache_dir: bpy.props.StringProperty(
+        name="Manual Asset Cache Directory",
+        description=(
+            "Optional developer override for map import asset cache; "
+            "empty uses UModel Export Directory/temp-assets"
+        ),
+        subtype='DIR_PATH'
+    )
+
+    save_missing_asset_report: bpy.props.BoolProperty(
+        name="Save Missing Asset Report",
+        description="Write a structured missing asset report after map import",
+        default=True
+    )
+
+    missing_asset_report_format: bpy.props.EnumProperty(
+        name="Missing Asset Report Format",
+        description="File format for missing asset reports",
+        items=[
+            (missing_asset_report.CSV, "CSV", "Write a CSV report")
+        ],
+        default=missing_asset_report.CSV
+    )
+
+    max_missing_assets_printed_to_console: bpy.props.IntProperty(
+        name="Max Missing Assets Printed to Console",
+        description="Maximum missing asset rows printed to the console summary",
+        default=30,
+        min=0
+    )
+
+    deduplicate_missing_assets: bpy.props.BoolProperty(
+        name="Deduplicate Missing Assets",
+        description="Merge repeated missing references to the same asset in the report",
+        default=True
+    )
+
+    missing_asset_report_directory_mode: bpy.props.EnumProperty(
+        name="Missing Asset Report Directory",
+        description="Where missing asset reports should be saved",
+        items=[
+            (
+                missing_asset_report.DIRECTORY_UMODEL_EXPORT,
+                "UModel Export Directory",
+                "Save reports next to UModel exports",
+            ),
+            (missing_asset_report.DIRECTORY_ASSET_CACHE, "Asset Cache Directory", "Save reports in the asset cache"),
+            (missing_asset_report.DIRECTORY_CUSTOM, "Custom", "Save reports in a custom directory")
+        ],
+        default=missing_asset_report.DIRECTORY_UMODEL_EXPORT
+    )
+
+    custom_missing_asset_report_directory: bpy.props.StringProperty(
+        name="Custom Missing Asset Report Directory",
+        description="Directory for missing asset reports when Directory is Custom",
+        subtype='DIR_PATH'
+    )
+
+    include_actor_context_in_missing_report: bpy.props.BoolProperty(
+        name="Include Actor Context in Missing Report",
+        description="Include actor and component fields in missing asset reports",
+        default=True
+    )
+
     show_advanced_import_validation_settings: bpy.props.BoolProperty(
         name="Show Advanced Import Validation Settings",
         description="Show advanced import validation settings",
@@ -254,6 +371,14 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "display_cur_profile")
         layout.prop(self, "verbose")
+        layout.prop(self, "default_import_storage_mode")
+        layout.prop(self, "editable_materials_by_default")
+        layout.prop(self, "default_load_pbr_maps")
+        layout.prop(self, "default_texture_format")
+        layout.prop(self, "default_import_backface_culling")
+        layout.prop(self, "manual_asset_cache_dir")
+        layout.prop(self, "save_missing_asset_report")
+        layout.prop(self, "max_missing_assets_printed_to_console")
         layout.prop(self, "show_advanced_import_validation_settings",
                     icon='TRIA_DOWN' if self.show_advanced_import_validation_settings else 'TRIA_RIGHT')
         layout.prop(self, "show_advanced_path_resolution_settings",
@@ -285,6 +410,14 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
             path_col.prop(self, "path_inference_mode")
             path_col.prop(self, "enable_suffix_index")
             box.prop(self, "report_path_resolution_stats")
+
+            box.label(text=localization.t_iface("Advanced Missing Asset Handling"))
+            box.prop(self, "missing_asset_report_format")
+            box.prop(self, "deduplicate_missing_assets")
+            box.prop(self, "missing_asset_report_directory_mode")
+            if self.missing_asset_report_directory_mode == missing_asset_report.DIRECTORY_CUSTOM:
+                box.prop(self, "custom_missing_asset_report_directory")
+            box.prop(self, "include_actor_context_in_missing_report")
 
         if context.preferences.view.show_developer_ui:
             layout.prop(self, "debug")
