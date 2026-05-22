@@ -3,8 +3,6 @@ import typing as t
 
 import lark
 
-from . import utils
-
 
 with open(os.path.join(os.path.dirname(__file__), 'props_txt_grammar.lark'), mode='r', encoding='utf-8') as grammar_f:
     lark_parser = lark.Lark(grammar_f, parser='earley', propagate_positions=True, ambiguity='resolve')
@@ -35,7 +33,7 @@ def parse_props_txt(props_txt_path: str,
     :raises RuntimeError: Raised when reading the file failed.
     :return: A list of relative paths (game format paths).
     """
-    utils.verbose_print(f"Parsing {props_txt_path}...")
+    _verbose_print(f"Parsing {props_txt_path}...")
 
     with open(props_txt_path, mode='r', encoding='utf-8') as f:
         text = f.read()
@@ -124,3 +122,123 @@ def parse_props_txt(props_txt_path: str,
 
             case _:
                 raise NotImplementedError()
+
+
+Color: t.TypeAlias = tuple[float, float, float, float]
+
+
+def extract_parent_reference(ast: lark.Tree) -> str | None:
+    for child in ast.children:
+        def_name, _, value = child.children
+        if def_name == 'Parent' and value.data == 'path':
+            return _path_value(value)
+
+    return None
+
+
+def extract_scalar_parameters(ast: lark.Tree) -> dict[str, float]:
+    values = {}
+
+    for parameter in _iter_parameter_blocks(ast, 'ScalarParameterValues'):
+        name = _parameter_name(parameter)
+        value = _struct_value(parameter, 'ParameterValue')
+        if name is None or value is None or value.data != 'const':
+            continue
+
+        try:
+            values[name.lower()] = float(_const_value(value))
+        except ValueError:
+            continue
+
+    return values
+
+
+def extract_vector_parameters(ast: lark.Tree) -> dict[str, Color]:
+    values = {}
+
+    for parameter in _iter_parameter_blocks(ast, 'VectorParameterValues'):
+        name = _parameter_name(parameter)
+        value = _struct_value(parameter, 'ParameterValue')
+        if name is None or value is None or value.data != 'structured_block':
+            continue
+
+        color = _vector_value(value)
+        if color is not None:
+            values[name.lower()] = color
+
+    return values
+
+
+def _verbose_print(*args: t.Any) -> None:
+    try:
+        from . import utils  # pylint: disable=import-outside-toplevel
+    except Exception:  # pragma: no cover - test environments may not provide bpy.
+        return
+
+    try:
+        utils.verbose_print(*args)
+    except Exception:  # pragma: no cover - addon preferences may not be registered in headless tests.
+        return
+
+
+def _iter_parameter_blocks(ast: lark.Tree, block_name: str) -> t.Iterator[lark.Tree]:
+    for child in ast.children:
+        def_name, array_qual, value = child.children
+        if def_name != block_name or array_qual is None or value.data != 'structured_block':
+            continue
+
+        for param_def in value.children:
+            _, _, parameter = param_def.children
+            if parameter.data == 'structured_block':
+                yield parameter
+
+
+def _parameter_name(parameter: lark.Tree) -> str | None:
+    param_info = _struct_value(parameter, 'ParameterInfo')
+    if param_info is None or param_info.data != 'structured_block':
+        return None
+
+    name_value = _struct_value(param_info, 'Name')
+    if name_value is None or name_value.data != 'const':
+        return None
+
+    return _const_value(name_value)
+
+
+def _struct_value(structured_block: lark.Tree, name: str) -> lark.Tree | None:
+    for child in structured_block.children:
+        def_name, _, value = child.children
+        if def_name == name:
+            return value
+
+    return None
+
+
+def _vector_value(structured_block: lark.Tree) -> Color | None:
+    channels = {
+        'r': 0.0,
+        'g': 0.0,
+        'b': 0.0,
+        'a': 1.0,
+    }
+
+    for child in structured_block.children:
+        channel_name, _, channel_value = child.children
+        channel_name = channel_name.lower()
+        if channel_name not in channels or channel_value.data != 'const':
+            return None
+
+        try:
+            channels[channel_name] = float(_const_value(channel_value))
+        except ValueError:
+            return None
+
+    return channels['r'], channels['g'], channels['b'], channels['a']
+
+
+def _const_value(value: lark.Tree) -> str:
+    return value.children[0].value.strip()
+
+
+def _path_value(value: lark.Tree) -> str:
+    return value.children[1].children[0].value[1:-1]
