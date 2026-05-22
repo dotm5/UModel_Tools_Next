@@ -172,9 +172,14 @@ cython_debug/
 /probe_blender_api_output.json
 /probe_blender_i18n.py
 /diagnose_real_import.py
+/scripts/export_umodel_targets.ps1
 /reference/*.zip
 /reference/diagnostics/
 /umodel_tools/last_import_params.json
+/material_mapping_audit*.csv
 /test_runtime_local_single/
 /test_runtime_missing_report/
+/test_runtime_blender_icebase/
 /test_localization.py
+/toTest/
+/package_work/

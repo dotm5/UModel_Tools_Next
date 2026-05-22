@@ -33,7 +33,7 @@ class TextureRule:
         return _normalize_token(tex_type) in self.param_names
 
     def matches_suffix(self, tex_short_name: str) -> bool:
-        return _texture_suffix(tex_short_name) in self.suffixes
+        return _matches_texture_suffix(tex_short_name, self.suffixes)
 
 
 class MaterialRuleSet:
@@ -118,8 +118,24 @@ def _parse_connection(raw_connection: t.Any, rule_name: str, rule_path: str) -> 
     return ConnectionSpec(source=source, target=target)
 
 
-def _texture_suffix(tex_short_name: str) -> str:
-    return _normalize_token(tex_short_name).rsplit("_", maxsplit=1)[-1]
+def _matches_texture_suffix(tex_short_name: str, suffixes: frozenset[str]) -> bool:
+    normalized_name = _normalize_texture_name(tex_short_name)
+    if _texture_suffix(normalized_name) in suffixes:
+        return True
+
+    return any(
+        normalized_name == suffix or normalized_name.endswith(f"_{suffix}")
+        for suffix in suffixes
+        if "_" in suffix
+    )
+
+
+def _texture_suffix(normalized_tex_name: str) -> str:
+    return normalized_tex_name.rsplit("_", maxsplit=1)[-1]
+
+
+def _normalize_texture_name(tex_short_name: str) -> str:
+    return _normalize_token(os.path.basename(tex_short_name).lstrip("."))
 
 
 def _normalize_token(value: t.Any) -> str:

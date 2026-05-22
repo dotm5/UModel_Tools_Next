@@ -9,13 +9,41 @@ texture_rules:
         - d
         - bc
         - base color
+        - base color map
+        - base colour
+        - base colour map
         - basecolor
         - basecolor_low
+        - basecolour
         - diffuse
         - diffuse map
+        - diffuse and alpha
+        - diffuseandalpha
+        - blend base
+        - blendbase
+        - main texture
+        - main tex
+        - maintex
         - maintexture
+        - surface tex
+        - surface texture
+        - surfacetex
+        - inside tex
+        - inside texture
+        - insidetex
+        - crystal content tex
+        - crystalcontenttex
+        - matcap tex
+        - matcaptex
+        - content texture
+        - contenttexture
+        - jingti map
+        - jingti_map
+        - albedo
+        - albedo map
       suffixes:
         - d
+        - d2
         - bc
         - basecolor
         - basecolour
@@ -33,28 +61,60 @@ texture_rules:
         - n
         - normal
         - normal map
+        - normal texture
         - normalmap
         - normalmapa
         - normalmapb
+        - tangent normal
+        - tangentnormal
+        - bump
+        - bump map
       suffixes:
         - n
         - normal
         - normalmap
+        - bump
     nodes:
+      split: ShaderNodeSeparateColor
+      invert_green: ShaderNodeInvert
+      combine: ShaderNodeCombineColor
       normal_map: ShaderNodeNormalMap
     connections:
+      - from: image.Color
+        to: split.Color
+      - from: split.Red
+        to: combine.Red
+      - from: split.Green
+        to: invert_green.Color
+      - from: invert_green.Color
+        to: combine.Green
+      - from: split.Blue
+        to: combine.Blue
+      - from: combine.Color
+        to: normal_map.Color
       - from: normal_map.Normal
         to: bsdf.Normal
-      - from: image.Color
-        to: normal_map.Color
 
   - name: orm
     prefer_suffix: true
     match:
       param_names:
         - orm
+        - occlusion roughness metallic
+        - occlusionroughnessmetallic
+        - occlusion roughness metalness
+        - occlusionroughnessmetalness
+        - ambient occlusion roughness metallic
+        - ambientocclusionroughnessmetallic
+        - ao_r_m_mask
+        - ao r m mask
+        - blend_ao_r_m_mask
+        - blend ao r m mask
       suffixes:
         - orm
+        - occlusionroughnessmetallic
+        - ao_r_m_mask
+        - blend_ao_r_m_mask
     nodes:
       split: ShaderNodeSeparateColor
     connections:
@@ -72,8 +132,13 @@ texture_rules:
     match:
       param_names:
         - rmo
+        - roughness metallic occlusion
+        - roughnessmetallicocclusion
+        - roughness metalness occlusion
+        - roughnessmetalnessocclusion
       suffixes:
         - rmo
+        - roughnessmetallicocclusion
     nodes:
       split: ShaderNodeSeparateColor
     connections:
@@ -81,42 +146,6 @@ texture_rules:
         to: bsdf.Roughness
       - from: split.Green
         to: bsdf.Metallic
-      - from: split.Blue
-        to: ao_mix.Color2
-      - from: image.Color
-        to: split.Color
-
-  - name: rm
-    prefer_suffix: true
-    match:
-      param_names:
-        - rm
-      suffixes:
-        - rm
-    nodes:
-      split: ShaderNodeSeparateColor
-    connections:
-      - from: split.Red
-        to: bsdf.Roughness
-      - from: split.Green
-        to: bsdf.Metallic
-      - from: image.Color
-        to: split.Color
-
-  - name: sro
-    prefer_suffix: true
-    match:
-      param_names:
-        - sro
-      suffixes:
-        - sro
-    nodes:
-      split: ShaderNodeSeparateColor
-    connections:
-      - from: split.Red
-        to: bsdf.Specular
-      - from: split.Green
-        to: bsdf.Roughness
       - from: split.Blue
         to: ao_mix.Color2
       - from: image.Color
@@ -128,6 +157,8 @@ texture_rules:
       param_names:
         - mroh
         - mroh/sroh
+        - metallic roughness occlusion height
+        - metallicroughnessocclusionheight
       suffixes:
         - mroh
         - sroh
@@ -154,6 +185,8 @@ texture_rules:
       param_names:
         - mro
         - mro/sro
+        - metallic roughness occlusion
+        - metallicroughnessocclusion
       suffixes:
         - mro
         - mroa
@@ -168,3 +201,258 @@ texture_rules:
         to: ao_mix.Color2
       - from: image.Color
         to: split.Color
+
+  - name: rm
+    prefer_suffix: true
+    match:
+      param_names:
+        - rm
+        - roughness metallic
+        - roughnessmetallic
+      suffixes:
+        - rm
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: bsdf.Roughness
+      - from: split.Green
+        to: bsdf.Metallic
+      - from: image.Color
+        to: split.Color
+
+  - name: sro
+    prefer_suffix: true
+    match:
+      param_names:
+        - sro
+        - specular roughness occlusion
+        - specularroughnessocclusion
+      suffixes:
+        - sro
+    nodes:
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: split.Red
+        to: bsdf.Specular
+      - from: split.Green
+        to: bsdf.Roughness
+      - from: split.Blue
+        to: ao_mix.Color2
+      - from: image.Color
+        to: split.Color
+
+  - name: ao
+    prefer_suffix: true
+    match:
+      param_names:
+        - ao
+        - ambient occlusion
+        - ambientocclusion
+        - occlusion
+        - occlusion map
+      suffixes:
+        - ao
+        - occlusion
+    connections:
+      - from: image.Color
+        to: ao_mix.Color2
+
+  - name: roughness
+    prefer_suffix: true
+    match:
+      param_names:
+        - roughness
+        - roughness map
+        - roughness texture
+      suffixes:
+        - rough
+        - roughness
+    connections:
+      - from: image.Color
+        to: bsdf.Roughness
+
+  - name: metallic
+    prefer_suffix: true
+    match:
+      param_names:
+        - metallic
+        - metallic map
+        - metallic texture
+        - metalness
+        - metalness map
+      suffixes:
+        - metal
+        - metallic
+        - metalness
+    connections:
+      - from: image.Color
+        to: bsdf.Metallic
+
+  - name: specular
+    prefer_suffix: true
+    match:
+      param_names:
+        - specular
+        - specular map
+        - specularity
+      suffixes:
+        - specular
+        - spec
+    connections:
+      - from: image.Color
+        to: bsdf.Specular
+
+  - name: alpha_mask
+    match:
+      param_names:
+        - alpha mask
+        - alpha mask texture
+        - alpha map
+        - alpha
+        - alpha texture
+        - alpha tex
+        - alphamaska_tex
+        - alphamaskb_tex
+        - mask
+        - mask map
+        - opacity
+        - opacity mask
+        - opacity mask texture
+        - dissolve map
+        - dissolvemap
+        - dissolve mask
+        - dissolvemask
+        - dissolve tex
+        - dissolvetex
+        - noise tex
+        - noise texture
+        - noisetex
+        - main tex uv noise tex
+        - maintexuvnoise_tex
+        - vertex noise
+        - t-noise_wall
+        - t-noise_wallmask
+        - maskrg
+        - edge highlight mask
+        - edgehighlightmask
+        - alpha mask a
+        - cutout
+        - transparency
+        - transparent
+      suffixes:
+        - mask
+        - alphamask
+        - opacity
+        - opacitymask
+        - cutout
+        - transparency
+    nodes:
+      transparent: ShaderNodeBsdfTransparent
+      mix_shader: ShaderNodeMixShader
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: image.Color
+        to: split.Color
+      - from: split.Red
+        to: mix_shader.Fac
+      - from: transparent.BSDF
+        to: mix_shader.Shader
+      - from: bsdf.BSDF
+        to: mix_shader.Shader_001
+      - from: mix_shader.Shader
+        to: output.Surface
+
+  - name: alpha_mask
+    match:
+      suffixes:
+        - m
+        - maska
+        - maskb
+    nodes:
+      transparent: ShaderNodeBsdfTransparent
+      mix_shader: ShaderNodeMixShader
+      split: ShaderNodeSeparateColor
+    connections:
+      - from: image.Color
+        to: split.Color
+      - from: split.Red
+        to: mix_shader.Fac
+      - from: transparent.BSDF
+        to: mix_shader.Shader
+      - from: bsdf.BSDF
+        to: mix_shader.Shader_001
+      - from: mix_shader.Shader
+        to: output.Surface
+
+  - name: glass
+    prefer_suffix: true
+    match:
+      param_names:
+        - glass
+        - glass map
+        - window
+        - window glass
+        - refraction
+        - lens
+      suffixes:
+        - glass
+        - window
+        - lens
+        - refraction
+    nodes:
+      glass: ShaderNodeBsdfGlass
+    connections:
+      - from: image.Color
+        to: glass.Color
+      - from: glass.BSDF
+        to: output.Surface
+
+  - name: translucent
+    prefer_suffix: true
+    match:
+      param_names:
+        - translucent
+        - translucent map
+        - translucency
+        - thin
+      suffixes:
+        - translucent
+        - translucency
+    nodes:
+      translucent: ShaderNodeBsdfTranslucent
+    connections:
+      - from: image.Color
+        to: translucent.Color
+      - from: translucent.BSDF
+        to: output.Surface
+
+  - name: emissive
+    prefer_suffix: true
+    match:
+      param_names:
+        - emissive
+        - emissive map
+        - emission
+        - emission map
+        - glow
+        - led tex
+        - t_ledtex
+        - self illumination
+        - self illuminated
+      suffixes:
+        - emissive
+        - emission
+        - glow
+    nodes:
+      emission: ShaderNodeEmission
+      add_shader: ShaderNodeAddShader
+    connections:
+      - from: image.Color
+        to: emission.Color
+      - from: bsdf.BSDF
+        to: add_shader.Shader
+      - from: emission.Emission
+        to: add_shader.Shader_001
+      - from: add_shader.Shader
+        to: output.Surface

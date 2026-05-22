@@ -16,6 +16,7 @@ from . import game_profiles
 from . import umodel_path_resolver
 from . import localization
 from . import missing_asset_report
+from . import material_shader_hints
 
 
 LINKED_ASSET_LIBRARY = "LINKED_ASSET_LIBRARY"
@@ -57,6 +58,93 @@ class ImportRuntimeStats:
 
 class AssetImportPolicyError(RuntimeError):
     """Raised when a user-selected missing-asset policy requires import cancellation."""
+
+
+def _remove_unused_ao_mix(mat: bpy.types.Material,
+                          ao_mix: bpy.types.ShaderNodeMix,
+                          bsdf: bpy.types.ShaderNodeBsdfPrincipled) -> None:
+    """Bypass the base-color AO multiply node when no AO texture was connected."""
+    ao_input = ao_mix.inputs[7]
+    if ao_input.is_linked:
+        return
+
+    base_color_input = utils.get_bsdf_input(bsdf, 'Base Color')
+    color_input = ao_mix.inputs[6]
+    result_output = ao_mix.outputs[2]
+    color_links = list(color_input.links)
+    result_links = list(result_output.links)
+
+    if color_links:
+        color_source = color_links[0].from_socket
+        for link in result_links:
+            target_socket = link.to_socket
+            mat.node_tree.links.remove(link)
+            mat.node_tree.links.new(color_source, target_socket)
+    else:
+        try:
+            base_color_input.default_value = color_input.default_value
+        except (AttributeError, TypeError):
+            pass
+
+    mat.node_tree.nodes.remove(ao_mix)
+
+
+def _set_node_input_default(node: bpy.types.Node, socket_name: str, value: t.Any) -> None:
+    socket = node.inputs.get(socket_name)
+    if socket is None:
+        return
+
+    utils.set_socket_value(socket, value)
+
+
+def _configure_dithered_alpha_surface(mat: bpy.types.Material) -> None:
+    if hasattr(mat, 'surface_render_method'):
+        mat.surface_render_method = 'DITHERED'
+    if hasattr(mat, 'blend_method'):
+        mat.blend_method = 'HASHED'
+    if hasattr(mat, 'use_transparency_overlap'):
+        mat.use_transparency_overlap = True
+    if hasattr(mat, 'show_transparent_back'):
+        mat.show_transparent_back = True
+    if hasattr(mat, 'use_transparent_shadow'):
+        mat.use_transparent_shadow = True
+
+
+def _apply_glass_shader_hint(mat: bpy.types.Material,
+                             out: bpy.types.ShaderNodeOutputMaterial,
+                             bsdf: bpy.types.ShaderNodeBsdfPrincipled,
+                             shader_hint: material_shader_hints.MaterialShaderHint) -> None:
+    for link in list(out.inputs['Surface'].links):
+        mat.node_tree.links.remove(link)
+
+    mat.diffuse_color = shader_hint.color[:3] + (shader_hint.alpha,)
+    _configure_dithered_alpha_surface(mat)
+
+    glass = mat.node_tree.nodes.new('ShaderNodeBsdfGlass')
+    _set_node_input_default(glass, 'Color', shader_hint.color)
+    if shader_hint.roughness is not None:
+        _set_node_input_default(glass, 'Roughness', shader_hint.roughness)
+
+    if shader_hint.alpha < 1.0:
+        transparent = mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
+        mix_shader = mat.node_tree.nodes.new('ShaderNodeMixShader')
+        mix_shader.inputs[0].default_value = 1.0 - shader_hint.alpha
+        mat.node_tree.links.new(glass.outputs['BSDF'], mix_shader.inputs[1])
+        mat.node_tree.links.new(transparent.outputs['BSDF'], mix_shader.inputs[2])
+        mat.node_tree.links.new(mix_shader.outputs[0], out.inputs['Surface'])
+    else:
+        mat.node_tree.links.new(glass.outputs['BSDF'], out.inputs['Surface'])
+
+    utils.set_socket_value(utils.get_bsdf_input(bsdf, 'Alpha'), shader_hint.alpha)
+
+
+def _remove_default_principled_nodes(mat: bpy.types.Material,
+                                    ao_mix: bpy.types.ShaderNodeMix,
+                                    bsdf: bpy.types.ShaderNodeBsdfPrincipled) -> None:
+    if ao_mix.name in mat.node_tree.nodes:
+        mat.node_tree.nodes.remove(ao_mix)
+    if bsdf.name in mat.node_tree.nodes:
+        mat.node_tree.nodes.remove(bsdf)
 
 
 class AssetImporter:
@@ -507,6 +595,9 @@ class AssetImporter:
 
         desc_ast, texture_infos, base_prop_overrides = props_txt_parser.parse_props_txt(material_props.path,
                                                                                         mode='MATERIAL')
+        parent_reference = props_txt_parser.extract_parent_reference(desc_ast)
+        scalar_parameters = props_txt_parser.extract_scalar_parameters(desc_ast)
+        vector_parameters = props_txt_parser.extract_vector_parameters(desc_ast)
         material_name = utils.normalize_ue_name(material_name, fallback="Material")
         new_mat = bpy.data.materials.new(utils.normalize_ue_name(material_name, fallback="Material"))
         new_mat.asset_mark()
@@ -520,6 +611,15 @@ class AssetImporter:
 
         if self.load_pbr_maps:
             special_blend_mode = None
+            blend_mode = base_prop_overrides.get('BlendMode') if base_prop_overrides is not None else None
+            shader_hint = material_shader_hints.infer_shader_hint(
+                material_name=material_name,
+                material_path_local=material_path_local,
+                parent_reference=parent_reference,
+                scalar_parameters=scalar_parameters,
+                vector_parameters=vector_parameters,
+                blend_mode=blend_mode,
+            )
 
             # set various material parameters
             if base_prop_overrides is not None:
@@ -579,6 +679,9 @@ class AssetImporter:
                     new_mat.node_tree.links.new(bsdf.outputs['BSDF'], shader_to_rgb.inputs[0])
                     new_mat.node_tree.links.new(shader_to_rgb.outputs['Color'], transparent_bsdf.inputs['Color'])
                     new_mat.node_tree.links.new(transparent_bsdf.outputs['BSDF'], out.inputs['Surface'])
+
+            if shader_hint is not None and shader_hint.shader == "glass":
+                _apply_glass_shader_hint(new_mat, out, bsdf, shader_hint)
         else:
             bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfDiffuse')
             new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
@@ -664,8 +767,14 @@ class AssetImporter:
                                                                  img_node=img_node,
                                                                  bsdf_node=bsdf)
 
-        # new_mat.asset_generate_preview()
         game_profile_impl.end_process_material(new_mat)
+        if self.load_pbr_maps:
+            if shader_hint is not None and shader_hint.shader == "glass":
+                _remove_default_principled_nodes(new_mat, ao_mix, bsdf)
+            else:
+                _remove_unused_ao_mix(new_mat, ao_mix, bsdf)
+
+        # new_mat.asset_generate_preview()
 
         material_lib_path = os.path.join(asset_library_dir, material_path_local_no_ext) + '.blend'
         os.makedirs(os.path.dirname(material_lib_path), exist_ok=True)
