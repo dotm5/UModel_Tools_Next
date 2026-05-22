@@ -13,6 +13,8 @@ from . import utils
 from . import asset_db
 from . import props_txt_parser
 from . import game_profiles
+from . import umodel_path_resolver
+from . import localization
 
 
 class AssetImporter:
@@ -47,6 +49,7 @@ class AssetImporter:
     _unrecognized_texture_types: set[str] = set()
 
     _has_warnings: bool = False
+    _path_resolve_stats: umodel_path_resolver.UModelPathResolveStats = umodel_path_resolver.UModelPathResolveStats()
 
     def _op_message(self, msg_type: t.Literal['INFO'] | t.Literal['ERROR'] | t.Literal['WARNING'], msg: str):
         """Print operator message and return the associated status-code.
@@ -56,7 +59,7 @@ class AssetImporter:
         :raises NotImplementedError: Raise when an incorrect ``type`` is passed.
         :return: Blender operator error code.
         """
-        self.report(type={msg_type, }, message=msg)  # pylint: disable=no-member
+        self.report(type={msg_type, }, message=localization.t_report(msg))  # pylint: disable=no-member
         match msg_type:
             case 'INFO':
                 return {'FINISHED'}
@@ -81,6 +84,46 @@ class AssetImporter:
             print("Unrecognized texture types found:")
             print(self._unrecognized_texture_types)
             self._unrecognized_texture_types.clear()
+
+    def _get_path_inference_settings(self) -> umodel_path_resolver.UModelPathInferenceSettings:
+        prefs = utils.preferences.get_addon_preferences()
+        return umodel_path_resolver.UModelPathInferenceSettings(
+            enable_umodel_path_inference=getattr(prefs, "enable_umodel_path_inference", True),
+            path_inference_mode=getattr(prefs, "path_inference_mode", umodel_path_resolver.BASIC_DEFAULT),
+            enable_suffix_index=getattr(prefs, "enable_suffix_index", True),
+        )
+
+    def _resolve_umodel_path(self,
+                             umodel_export_dir: str,
+                             asset_path: str,
+                             extensions: t.Sequence[str]) -> umodel_path_resolver.ResolvedUModelPath:
+        resolved = umodel_path_resolver.resolve_umodel_export_asset_path(
+            export_dir=umodel_export_dir,
+            asset_path=asset_path,
+            extensions=extensions,
+            settings=self._get_path_inference_settings(),
+            stats=self._path_resolve_stats,
+        )
+
+        for warning in resolved.warnings:
+            self._warn_print(f"Warning: {warning}")
+
+        if resolved.status in {"inferred", "suffix"} and resolved.relative_path is not None:
+            exact_candidate = umodel_path_resolver.build_umodel_asset_path_candidates(
+                asset_path=asset_path,
+                extensions=extensions,
+                settings=umodel_path_resolver.UModelPathInferenceSettings(
+                    enable_umodel_path_inference=False,
+                    path_inference_mode=umodel_path_resolver.STRICT_EXACT,
+                ),
+            )[0]
+            utils.verbose_print(
+                f"{localization.t_report('Resolved truncated UModel path')}:\n"
+                f"  {exact_candidate}\n"
+                f"  -> {resolved.relative_path}"
+            )
+
+        return resolved
 
     def _load_asset(self,
                     context: bpy.types.Context,
@@ -185,10 +228,20 @@ class AssetImporter:
 
         # load texture infos, may throw OSError if file is not found.
         # pylint: disable=unpacking-non-sequence
-        desc_ast, texture_infos, base_prop_overrides = props_txt_parser.parse_props_txt(os.path.join(umodel_export_dir,
-                                                                                        material_path_local),
+        material_props = self._resolve_umodel_path(
+            umodel_export_dir=umodel_export_dir,
+            asset_path=material_path_local,
+            extensions=('.props.txt',),
+        )
+        if not material_props.found or material_props.path is None:
+            raise FileNotFoundError(
+                f"Material descriptor {material_path_local} was not found in the UModel export path."
+            )
+
+        desc_ast, texture_infos, base_prop_overrides = props_txt_parser.parse_props_txt(material_props.path,
                                                                                         mode='MATERIAL')
-        new_mat = bpy.data.materials.new(material_name)
+        material_name = utils.normalize_ue_name(material_name, fallback="Material")
+        new_mat = bpy.data.materials.new(utils.normalize_ue_name(material_name, fallback="Material"))
         new_mat.asset_mark()
         new_mat.asset_data.catalog_id = db.uid_for_entry(material_path_local_no_ext)
         new_mat.use_nodes = True
@@ -239,7 +292,7 @@ class AssetImporter:
             ao_mix.blend_type = 'MULTIPLY'
             ao_mix.inputs[6].default_value = (1, 1, 1, 1)
             ao_mix.inputs[7].default_value = (1, 1, 1, 1)
-            new_mat.node_tree.links.new(ao_mix.outputs[2], bsdf.inputs['Base Color'])
+            new_mat.node_tree.links.new(ao_mix.outputs[2], utils.get_bsdf_input(bsdf, 'Base Color'))
 
             # in order to simulate some blending modes special node logic is required
             match special_blend_mode:
@@ -282,17 +335,21 @@ class AssetImporter:
             tex_path_no_ext = tex_path_no_ext[1:] if tex_path_no_ext.startswith(os.sep) else tex_path_no_ext
 
             tex_path = tex_path_no_ext + self.texture_format
-            tex_path_abs = os.path.join(umodel_export_dir, tex_path)
+            tex_path_resolved = self._resolve_umodel_path(
+                umodel_export_dir=umodel_export_dir,
+                asset_path=tex_path,
+                extensions=(self.texture_format,),
+            )
 
             tex_lib_path = os.path.join(asset_library_dir, tex_path)
             tex_lib_blend_path = os.path.splitext(tex_lib_path)[0] + '.blend'
 
             # check if texture is not already in the library
             if not os.path.isfile(tex_lib_blend_path):
-                if os.path.isfile(tex_path_abs):
+                if tex_path_resolved.found and tex_path_resolved.path is not None:
                     self._import_image_to_library(tex_path=tex_path,
                                                   tex_lib_path=tex_lib_path,
-                                                  tex_umodel_path=tex_path_abs,
+                                                  tex_umodel_path=tex_path_resolved.path,
                                                   db=db)
                 else:
                     self._warn_print(f"Warning: Material \"{material_name}\" referenced texture \"{tex_path}\" "
@@ -370,8 +427,14 @@ class AssetImporter:
         os.makedirs(asset_absolute_dir, exist_ok=True)
 
         asset_psk_path_noext = os.path.join(umodel_export_dir, asset_path_local_noext)
+        psk_resolved = self._resolve_umodel_path(
+            umodel_export_dir=umodel_export_dir,
+            asset_path=asset_path_local_noext,
+            extensions=('.pskx', '.psk'),
+        )
 
-        if os.path.isfile(pskx_path := asset_psk_path_noext + '.pskx'):
+        if psk_resolved.found and psk_resolved.path is not None and psk_resolved.path.endswith('.pskx'):
+            pskx_path = psk_resolved.path
             utils.verbose_print(f"Importing \"{pskx_path}\"")
 
             with contextlib.redirect_stdout(io.StringIO()):
@@ -382,7 +445,8 @@ class AssetImporter:
                                        "due to unknown reason.")
 
             animated = False
-        elif os.path.isfile(psk_path := asset_psk_path_noext + '.psk'):
+        elif psk_resolved.found and psk_resolved.path is not None and psk_resolved.path.endswith('.psk'):
+            psk_path = psk_resolved.path
             utils.verbose_print(f"Importing \"{psk_path}\"")
 
             with contextlib.redirect_stdout(io.StringIO()):
@@ -398,6 +462,7 @@ class AssetImporter:
                                     "(.psk/.pskx).")
 
         obj = context.object
+        asset_psk_path_noext = os.path.splitext(psk_resolved.path)[0] if psk_resolved.path else asset_psk_path_noext
 
         # mark object as asset
         obj.asset_mark()
@@ -409,7 +474,14 @@ class AssetImporter:
         # - read material descriptor file and identify associated materials
         try:
             # pylint: disable=unpacking-non-sequence
-            _, mat_descriptors_paths = props_txt_parser.parse_props_txt(asset_psk_path_noext + '.props.txt',
+            mesh_props = self._resolve_umodel_path(
+                umodel_export_dir=umodel_export_dir,
+                asset_path=asset_path_local_noext,
+                extensions=('.props.txt',),
+            )
+            if not mesh_props.found or mesh_props.path is None:
+                raise OSError()
+            _, mat_descriptors_paths = props_txt_parser.parse_props_txt(mesh_props.path,
                                                                         mode='MESH')
         except OSError:
             self._warn_print(f"Warning: Loading material descriptor {asset_psk_path_noext + '.props.txt'} failed. "
@@ -493,12 +565,16 @@ class AssetImporter:
                             new_mat = data_to.materials[0]
 
                 except FileNotFoundError as e:
-                    new_mat = bpy.data.materials.new(f"{material_name}_Placeholder")
+                    new_mat = bpy.data.materials.new(
+                        utils.normalize_ue_name(f"{material_name}_Placeholder", fallback="Material_Placeholder")
+                    )
                     self._warn_print(f"Warning: Material \"{material_name}\" failed to load, placeholder used instead. "
                                      f"({e}).")
 
                 except OSError:
-                    new_mat = bpy.data.materials.new(f"{material_name}_Placeholder")
+                    new_mat = bpy.data.materials.new(
+                        utils.normalize_ue_name(f"{material_name}_Placeholder", fallback="Material_Placeholder")
+                    )
                     self._warn_print(f"Warning: Material \"{material_name}\" failed to load, placeholder used instead.")
 
                 new_materials.append((new_mat, material_name))

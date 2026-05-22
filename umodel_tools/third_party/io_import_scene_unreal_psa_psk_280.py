@@ -79,6 +79,37 @@ from bpy.props import (FloatProperty,
 from struct import unpack, unpack_from, Struct
 import time
 
+
+def normalize_ue_name(value, fallback="Unnamed"):
+    if isinstance(value, bytes):
+        name = value.decode("utf-8", errors="replace")
+    elif value is None:
+        name = fallback
+    else:
+        name = str(value)
+
+    name = name.replace("\x00", "").strip()
+    return name if name else fallback
+
+
+def configure_mesh_normals(mesh_data, normals):
+    if normals is None:
+        return
+
+    if len(normals) != len(mesh_data.vertices):
+        raise ValueError(
+            "PSK custom normal count does not match mesh vertex count: "
+            f"{len(normals)} normals for {len(mesh_data.vertices)} vertices."
+        )
+
+    mesh_data.polygons.foreach_set("use_smooth", [True] * len(mesh_data.polygons))
+    mesh_data.normals_split_custom_set_from_vertices(normals)
+
+    if hasattr(mesh_data, "use_auto_smooth"):
+        mesh_data.use_auto_smooth = True
+
+    mesh_data.update()
+
 #DEV
 # from mathutils import *
 # from math import *
@@ -627,15 +658,15 @@ def pskimport(filepath,
     # file name w/out extension
     gen_name_part = util_gen_name_part(filepath)
     gen_names = {
-        'armature_object':  gen_name_part + '.ao',
-        'armature_data':    gen_name_part + '.ad',
-            'mesh_object':  gen_name_part + '.mo',
-            'mesh_data':    gen_name_part + '.md'
+        'armature_object':  normalize_ue_name(gen_name_part + '.ao', fallback="Armature_Object"),
+        'armature_data':    normalize_ue_name(gen_name_part + '.ad', fallback="Armature_Data"),
+            'mesh_object':  normalize_ue_name(gen_name_part + '.mo', fallback="Mesh_Object"),
+            'mesh_data':    normalize_ue_name(gen_name_part + '.md', fallback="Mesh_Data")
     }
 
     if bImportmesh:
-        mesh_data = bpy.data.meshes.new(gen_names['mesh_data'])
-        mesh_obj = bpy.data.objects.new(gen_names['mesh_object'], mesh_data)
+        mesh_data = bpy.data.meshes.new(normalize_ue_name(gen_names['mesh_data'], fallback="Mesh_Data"))
+        mesh_obj = bpy.data.objects.new(normalize_ue_name(gen_names['mesh_object'], fallback="Mesh_Object"), mesh_data)
 
 
     #==================================================================================================
@@ -687,10 +718,11 @@ def pskimport(filepath,
         # print("-- Materials -- (index, name, faces)")
         blen_materials = []
         for materialname in Materials:
+            materialname = normalize_ue_name(materialname, fallback="PSK_Material")
             matdata = bpy.data.materials.get(materialname)
 
             if matdata is None:
-                matdata = bpy.data.materials.new( materialname )
+                matdata = bpy.data.materials.new(normalize_ue_name(materialname, fallback="PSK_Material"))
             # matdata = bpy.data.materials.new( materialname )
 
             blen_materials.append( matdata )
@@ -811,8 +843,9 @@ def pskimport(filepath,
     #==================================================================================================
     # Skeleton. Prepare.
 
-        armature_data = bpy.data.armatures.new(gen_names['armature_data'])
-        armature_obj = bpy.data.objects.new(gen_names['armature_object'], armature_data)
+        armature_data = bpy.data.armatures.new(normalize_ue_name(gen_names['armature_data'], fallback="Armature_Data"))
+        armature_obj = bpy.data.objects.new(normalize_ue_name(gen_names['armature_object'], fallback="Armature_Object"),
+                                            armature_data)
         # TODO: options for axes and x_ray?
         armature_data.show_axes = False
 
@@ -1047,10 +1080,7 @@ def pskimport(filepath,
     #==================================================================================================
     # Vertex Normal. Set.
 
-        if Normals is not None:
-            mesh_data.polygons.foreach_set("use_smooth", [True] * len(mesh_data.polygons))
-            mesh_data.normals_split_custom_set_from_vertices(Normals)
-            mesh_data.use_auto_smooth = True
+        configure_mesh_normals(mesh_data, Normals)
 
     #===================================================================================================
     # UV. Set.
@@ -1556,7 +1586,7 @@ def psaimport(filepath,
         if bFilenameAsPrefix:
             Name = "(%s) %s" % (gen_name_part, Name)
 
-        action = bpy.data.actions.new(name = Name)
+        action = bpy.data.actions.new(name=normalize_ue_name(Name, fallback="PSA_Action"))
 
         # force print usefull information to console(due to possible long execution)
         print("Action {0:>3d}/{1:<3d} frames: {2:>4d} {3}".format(

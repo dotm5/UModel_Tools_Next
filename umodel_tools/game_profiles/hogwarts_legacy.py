@@ -10,6 +10,8 @@ import dataclasses
 import bpy
 import lark
 
+from .. import utils
+
 
 GAME_NAME = "Hogwarts Legacy"
 GAME_DESCRIPTION = "Hogwarts Legacy (2023) by Portkey Games"
@@ -139,7 +141,7 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
     match bl_tex_type:
         case TextureMapTypes.Diffuse:
             mat.node_tree.links.new(img_node.outputs['Color'], ao_mix_node.inputs[6])
-            mat.node_tree.links.new(img_node.outputs['Alpha'], bsdf_node.inputs['Alpha'])
+            mat.node_tree.links.new(img_node.outputs['Alpha'], utils.get_bsdf_input(bsdf_node, 'Alpha'))
             img_node.select = True
             mat.node_tree.nodes.active = img_node
             mat_ctx.diffuse_connected = True
@@ -147,20 +149,20 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
         case TextureMapTypes.Normal:
             normal_map_node = mat.node_tree.nodes.new('ShaderNodeNormalMap')
             mat.node_tree.links.new(normal_map_node.outputs['Normal'],
-                                    bsdf_node.inputs['Normal'])
+                                    utils.get_bsdf_input(bsdf_node, 'Normal'))
             mat.node_tree.links.new(img_node.outputs['Color'],
                                     normal_map_node.inputs['Color'])
         case TextureMapTypes.SRO:
             sro_split = mat.node_tree.nodes.new('ShaderNodeSeparateColor')
-            mat.node_tree.links.new(sro_split.outputs['Red'], bsdf_node.inputs['Specular'])
-            mat.node_tree.links.new(sro_split.outputs['Green'], bsdf_node.inputs['Roughness'])
+            mat.node_tree.links.new(sro_split.outputs['Red'], utils.get_bsdf_input(bsdf_node, 'Specular'))
+            mat.node_tree.links.new(sro_split.outputs['Green'], utils.get_bsdf_input(bsdf_node, 'Roughness'))
             mat.node_tree.links.new(sro_split.outputs['Blue'], ao_mix_node.inputs[7])
             mat.node_tree.links.new(img_node.outputs['Color'], sro_split.inputs['Color'])
         case TextureMapTypes.MROH:
             # MRO components
             mroh_split = mat.node_tree.nodes.new('ShaderNodeSeparateColor')
-            mat.node_tree.links.new(mroh_split.outputs['Red'], bsdf_node.inputs['Metallic'])
-            mat.node_tree.links.new(mroh_split.outputs['Green'], bsdf_node.inputs['Roughness'])
+            mat.node_tree.links.new(mroh_split.outputs['Red'], utils.get_bsdf_input(bsdf_node, 'Metallic'))
+            mat.node_tree.links.new(mroh_split.outputs['Green'], utils.get_bsdf_input(bsdf_node, 'Roughness'))
             mat.node_tree.links.new(mroh_split.outputs['Blue'], ao_mix_node.inputs[7])
             mat.node_tree.links.new(img_node.outputs['Color'], mroh_split.inputs['Color'])
 
@@ -172,8 +174,8 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
                                     displacement_node.inputs['Height'])
         case TextureMapTypes.MRO:
             mro_split = mat.node_tree.nodes.new('ShaderNodeSeparateColor')
-            mat.node_tree.links.new(mro_split.outputs['Red'], bsdf_node.inputs['Metallic'])
-            mat.node_tree.links.new(mro_split.outputs['Green'], bsdf_node.inputs['Roughness'])
+            mat.node_tree.links.new(mro_split.outputs['Red'], utils.get_bsdf_input(bsdf_node, 'Metallic'))
+            mat.node_tree.links.new(mro_split.outputs['Green'], utils.get_bsdf_input(bsdf_node, 'Roughness'))
             mat.node_tree.links.new(mro_split.outputs['Blue'], ao_mix_node.inputs[7])
             mat.node_tree.links.new(img_node.outputs['Color'], mro_split.inputs['Color'])
 
@@ -217,7 +219,7 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
 
             if not mat_ctx.diffuse_connected:
                 mat.node_tree.links.new(r_mix.outputs[2], ao_mix_node.inputs[6])
-                mat.node_tree.links.new(img_node.outputs['Alpha'], bsdf_node.inputs['Alpha'])
+                mat.node_tree.links.new(img_node.outputs['Alpha'], utils.get_bsdf_input(bsdf_node, 'Alpha'))
                 img_node.select = True
                 mat.node_tree.nodes.active = img_node
 
@@ -241,11 +243,11 @@ def end_process_material(mat: bpy.types.Material):
 
     if mat_ctx.use_pbr and mat_ctx.bsdf_node is not None:
         # set defaults
-        mat_ctx.bsdf_node.inputs[4].default_value = 1.01  # Subsurface IOR
-        mat_ctx.bsdf_node.inputs[7].default_value = 0.0  # Specular
-        mat_ctx.bsdf_node.inputs[9].default_value = 0.0  # Roughness
-        mat_ctx.bsdf_node.inputs[13].default_value = 0.0  # Sheen Tint
-        mat_ctx.bsdf_node.inputs[15].default_value = 0.0  # Clearcoat roughness
+        utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Subsurface IOR'), 1.01)
+        utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Specular'), 0.0)
+        utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Roughness'), 0.0)
+        utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Sheen Tint'), 0.0)
+        utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Clearcoat Roughness'), 0.0)
 
     del _state_buffer[mat]
 

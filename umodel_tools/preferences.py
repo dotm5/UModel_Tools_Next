@@ -4,6 +4,7 @@ import bpy
 
 from . import PACKAGE_NAME
 from . import game_profiles
+from . import localization
 
 
 def get_addon_preferences() -> 'UMODELTOOLS_AP_addon_preferences':
@@ -134,6 +135,109 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         default=False
     )
 
+    show_advanced_import_validation_settings: bpy.props.BoolProperty(
+        name="Show Advanced Import Validation Settings",
+        description="Show advanced import validation settings",
+        default=False
+    )
+
+    enable_import_validation: bpy.props.BoolProperty(
+        name="Enable Import Validation",
+        description="Validate imported scene counts and common data issues after map import",
+        default=True
+    )
+
+    validation_preset: bpy.props.EnumProperty(
+        name="Validation Preset",
+        description="Import validation strictness",
+        items=[
+            ('BASIC_DEFAULT', "Basic Default", "Conservative validation for normal importing"),
+            ('STRICT', "Strict", "Developer-oriented validation with high mesh/light expectations"),
+            ('CUSTOM', "Custom", "Use the manually configured validation thresholds")
+        ],
+        default='BASIC_DEFAULT'
+    )
+
+    min_mesh_count: bpy.props.IntProperty(
+        name="Min Mesh Count",
+        description="Minimum mesh object count required by Custom validation",
+        default=1,
+        min=0
+    )
+
+    min_light_count: bpy.props.IntProperty(
+        name="Min Light Count",
+        description="Minimum light object count required by Custom validation",
+        default=0,
+        min=0
+    )
+
+    min_material_count: bpy.props.IntProperty(
+        name="Min Material Count",
+        description="Minimum material datablock count required by Custom validation",
+        default=0,
+        min=0
+    )
+
+    require_any_material_assigned: bpy.props.BoolProperty(
+        name="Require Any Material Assigned",
+        description="Fail validation if no imported mesh has any assigned material",
+        default=False
+    )
+
+    reject_dict_like_names: bpy.props.BoolProperty(
+        name="Reject Dict-like Names",
+        description="Fail validation when Blender datablock names look like stringified JSON dictionaries",
+        default=True
+    )
+
+    fail_on_traceback_like_errors: bpy.props.BoolProperty(
+        name="Fail on traceback-like CLI errors",
+        description="Fail CLI/test validation when captured logs contain API traceback markers",
+        default=True
+    )
+
+    allow_missing_placeholder_materials: bpy.props.BoolProperty(
+        name="Allow Missing Placeholder Materials",
+        description="Treat placeholder materials as warnings instead of validation errors",
+        default=True
+    )
+
+    show_advanced_path_resolution_settings: bpy.props.BoolProperty(
+        name="Show Advanced Path Resolution Settings",
+        description="Show advanced UModel path resolution settings",
+        default=False
+    )
+
+    enable_umodel_path_inference: bpy.props.BoolProperty(
+        name="Enable UModel Path Inference",
+        description="Resolve common UModel export mount point truncation automatically",
+        default=True
+    )
+
+    enable_suffix_index: bpy.props.BoolProperty(
+        name="Enable Suffix Index",
+        description="Allow suffix-index lookup when Path Inference Mode is Aggressive",
+        default=True
+    )
+
+    report_path_resolution_stats: bpy.props.BoolProperty(
+        name="Report Path Resolution Stats",
+        description="Print path resolution counters after map import",
+        default=True
+    )
+
+    path_inference_mode: bpy.props.EnumProperty(
+        name="Path Inference Mode",
+        description="Controls how aggressively UModel export paths are resolved",
+        items=[
+            ('BASIC_DEFAULT', "Basic Default", "Exact lookup plus common UModel mount truncation aliases"),
+            ('STRICT_EXACT', "Strict Exact", "Only use direct legacy path matching"),
+            ('AGGRESSIVE', "Aggressive", "Use exact matching, mount truncation, and suffix index lookup")
+        ],
+        default='BASIC_DEFAULT'
+    )
+
     debug: bpy.props.BoolProperty(
         name="Debug",
         description="Enables debugging output, intended for developers only",
@@ -150,11 +254,42 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "display_cur_profile")
         layout.prop(self, "verbose")
+        layout.prop(self, "show_advanced_import_validation_settings",
+                    icon='TRIA_DOWN' if self.show_advanced_import_validation_settings else 'TRIA_RIGHT')
+        layout.prop(self, "show_advanced_path_resolution_settings",
+                    icon='TRIA_DOWN' if self.show_advanced_path_resolution_settings else 'TRIA_RIGHT')
+
+        if self.show_advanced_import_validation_settings:
+            box = layout.box()
+            box.label(text=localization.t_iface("Advanced Import Validation"))
+            box.prop(self, "enable_import_validation")
+            box.prop(self, "validation_preset")
+
+            col = box.column()
+            col.enabled = self.validation_preset == 'CUSTOM'
+            col.prop(self, "min_mesh_count")
+            col.prop(self, "min_light_count")
+            col.prop(self, "min_material_count")
+            col.prop(self, "require_any_material_assigned")
+
+            box.prop(self, "reject_dict_like_names")
+            box.prop(self, "fail_on_traceback_like_errors")
+            box.prop(self, "allow_missing_placeholder_materials")
+
+        if self.show_advanced_path_resolution_settings:
+            box = layout.box()
+            box.label(text=localization.t_iface("Advanced Path Resolution"))
+            box.prop(self, "enable_umodel_path_inference")
+            path_col = box.column()
+            path_col.enabled = self.enable_umodel_path_inference
+            path_col.prop(self, "path_inference_mode")
+            path_col.prop(self, "enable_suffix_index")
+            box.prop(self, "report_path_resolution_stats")
 
         if context.preferences.view.show_developer_ui:
             layout.prop(self, "debug")
 
-        layout.label(text="Game profiles:")
+        layout.label(text=localization.t_iface("Game profiles:"))
         row = layout.row()
         row.template_list("UMODELTOOLS_UL_game_profiles", "", self, "profiles", self, "active_profile_index")
 
@@ -172,7 +307,7 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
             pass
         else:
             layout.separator()
-            layout.label(text="Profile settings:")
+            layout.label(text=localization.t_iface("Profile settings:"))
 
             layout.prop(game_profile, "game")
             layout.prop(game_profile, "umodel_export_dir")
