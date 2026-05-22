@@ -27,6 +27,11 @@ WARN_SKIP = "WARN_SKIP"
 USE_PLACEHOLDER = "USE_PLACEHOLDER"
 FAIL_IMPORT = "FAIL_IMPORT"
 
+MATERIAL_CACHE_VERSION = 2
+MATERIAL_CACHE_VERSION_KEY = "umodel_tools_material_cache_version"
+ASSET_CACHE_VERSION = 2
+ASSET_CACHE_VERSION_KEY = "umodel_tools_asset_cache_version"
+
 
 @dataclasses.dataclass
 class ImportRuntimeStats:
@@ -145,6 +150,47 @@ def _remove_default_principled_nodes(mat: bpy.types.Material,
         mat.node_tree.nodes.remove(ao_mix)
     if bsdf.name in mat.node_tree.nodes:
         mat.node_tree.nodes.remove(bsdf)
+
+
+def _material_cache_is_current(material_lib_path: str) -> bool:
+    if not os.path.isfile(material_lib_path):
+        return False
+
+    try:
+        with bpy.data.libraries.load(filepath=material_lib_path, link=False) as (data_from, data_to):
+            if not data_from.materials:
+                return False
+            data_to.materials = [data_from.materials[0]]
+
+        material = data_to.materials[0]
+        try:
+            return int(material.get(MATERIAL_CACHE_VERSION_KEY, 0)) == MATERIAL_CACHE_VERSION
+        finally:
+            bpy.data.materials.remove(material, do_unlink=True)
+    except Exception:  # pragma: no cover - corrupt cache should be rebuilt during interactive imports.
+        return False
+
+
+def _remove_loaded_material_library(material_lib_path: str) -> None:
+    normalized_path = os.path.normcase(os.path.abspath(material_lib_path))
+    for material in list(bpy.data.materials):
+        library = getattr(material, "library", None)
+        if library is None:
+            continue
+        library_path = os.path.normcase(os.path.abspath(bpy.path.abspath(library.filepath)))
+        if library_path == normalized_path:
+            bpy.data.materials.remove(material, do_unlink=True)
+
+
+def _remove_loaded_asset_library(asset_lib_path: str) -> None:
+    normalized_path = os.path.normcase(os.path.abspath(asset_lib_path))
+    for obj in list(bpy.data.objects):
+        library = getattr(obj, "library", None)
+        if library is None:
+            continue
+        library_path = os.path.normcase(os.path.abspath(bpy.path.abspath(library.filepath)))
+        if library_path == normalized_path:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
 
 class AssetImporter:
@@ -397,6 +443,8 @@ class AssetImporter:
                 asset_path=asset_path,
                 umodel_export_dir=umodel_export_dir,
             ):
+                self._local_loaded_assets.pop(asset_path_abs, None)
+                _remove_loaded_asset_library(asset_path_abs)
                 os.remove(asset_path_abs)
 
             if not os.path.isfile(asset_path_abs):
@@ -423,6 +471,10 @@ class AssetImporter:
             return None
 
     def _is_asset_cache_stale(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
+        if not self._asset_cache_is_current(asset_path_abs):
+            utils.verbose_print(f"Rebuilding stale asset cache {asset_path_abs}; cache version changed")
+            return True
+
         source_paths = self._asset_cache_source_paths(
             asset_path=asset_path,
             umodel_export_dir=umodel_export_dir,
@@ -442,6 +494,28 @@ class AssetImporter:
             f"Rebuilding stale asset cache {asset_path_abs}; newer source file: {stale_sources[0]}"
         )
         return True
+
+    def _asset_cache_is_current(self, asset_path_abs: str) -> bool:
+        try:
+            with bpy.data.libraries.load(filepath=asset_path_abs, link=False) as (data_from, data_to):
+                if not data_from.objects:
+                    return False
+                data_to.objects = [data_from.objects[0]]
+
+            obj = data_to.objects[0]
+            mesh = getattr(obj, "data", None)
+            materials = list(mesh.materials) if mesh is not None and hasattr(mesh, "materials") else []
+            try:
+                return int(obj.get(ASSET_CACHE_VERSION_KEY, 0)) == ASSET_CACHE_VERSION
+            finally:
+                bpy.data.objects.remove(obj, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh, do_unlink=True)
+                for material in materials:
+                    if material is not None and material.users == 0:
+                        bpy.data.materials.remove(material, do_unlink=True)
+        except Exception:  # pragma: no cover - corrupt cache should be rebuilt during interactive imports.
+            return False
 
     def _asset_cache_source_paths(self, asset_path: str, umodel_export_dir: str) -> list[str]:
         source_paths: list[str] = []
@@ -600,6 +674,7 @@ class AssetImporter:
         vector_parameters = props_txt_parser.extract_vector_parameters(desc_ast)
         material_name = utils.normalize_ue_name(material_name, fallback="Material")
         new_mat = bpy.data.materials.new(utils.normalize_ue_name(material_name, fallback="Material"))
+        new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
         new_mat.asset_mark()
         new_mat.asset_data.catalog_id = db.uid_for_entry(material_path_local_no_ext)
         new_mat.use_nodes = True
@@ -864,6 +939,7 @@ class AssetImporter:
 
         # mark object as asset
         obj.asset_mark()
+        obj[ASSET_CACHE_VERSION_KEY] = ASSET_CACHE_VERSION
         obj.asset_data.catalog_id = catalog_uid
 
         # handle materials
@@ -956,7 +1032,8 @@ class AssetImporter:
 
                 try:
                     # add material to asset library if does not exist
-                    if not os.path.isfile(material_lib_path):
+                    if not _material_cache_is_current(material_lib_path):
+                        _remove_loaded_material_library(material_lib_path)
                         self._import_material_to_library(material_name=material_name,
                                                          material_path_local=material_path_local,
                                                          db=db,
