@@ -1,42 +1,32 @@
-# umodel_tools
-![PyLint](https://github.com/skarndev/umodel_tools/actions/workflows/pylint.yml/badge.svg)
-![pycodestyle](https://github.com/skarndev/umodel_tools/actions/workflows/pycodestyle.yml/badge.svg)
+# UModel Tools Next
 
-[![](https://dcbadge.vercel.app/api/server/DJYZwyegSF)](https://discord.gg/DJYZwyegSF)
+UModel Tools Next is dotm5's fork of the UModel Tools Blender add-on.
+It focuses on practical Unreal Engine map recovery workflows, stronger UModel/FModel path matching, local-single-file imports, and broader material reconstruction for packed texture patterns.
 
-A [Blender](https://blender.org) add-on featuring import of [Unreal Engine](https://www.unrealengine.com)
-games static meshes (stored in-game as .uasset) and maps (stored in-game as .umap). It provides basic support for many
-UE games, while [some](https://skarndev.github.io/umodel_tools/supported_games.html) have dedicated improved support.
+Repository: https://github.com/dotm5/UModel_Tools_Next
 
-![](/docs/source/images/demo.jpeg?raw=true "Demo")
+## Features
 
-# Features
-- Unreal Engine games map (.umap) and (.uasset) import.
-- Creation of asset library in Blender out of game's assets.
-- PBR materials.
-- Lights (experimental support).
+- Import Unreal Engine map JSON exports and static mesh assets into Blender.
+- Build and reuse a Blender asset cache from UModel exports.
+- Reconstruct PBR materials from common Unreal texture parameter patterns.
+- Handle packed ORM/RMO maps, DirectX normal conversion, glass/water hints, and packed diffuse alpha emission masks.
+- Generate missing-asset diagnostics for incomplete exports.
 
-# Usage
-You can learn how to install and use the add-on on the
-[documentation page](https://skarndev.github.io/umodel_tools/).
+## Packaging
 
-# Support
-You can support core feature development and adding more games at my
-[Boosty page](https://boosty.to/skarn).
+The distributed Blender add-on keeps only runtime site packages in `umodel_tools/third_party`.
+Reference importer code that is part of this fork, such as the PSK/PSKX importer integration, lives inline under `umodel_tools` so the vendored dependency folder does not grow into a mixed plugin dump.
 
-# Roadmap
-- Adding more games. 
-- Improving support for asset management.
-- Improving map import.
-- Improving lights import.
+## Credits
 
-# Credits
-- Gildor, for creating [UEViewer](https://www.gildor.org/en/projects/umodel).
+- Skarn for the original UModel Tools add-on.
+- Gildor for [UEViewer](https://www.gildor.org/en/projects/umodel).
 - Developers of [FModel](https://fmodel.app).
-- Developers of these [import scripts](https://github.com/Ganonmaster/Blender-Scripts/tree/master/ue4map-tools).
-- Befzz for developing the [.psk/.pskx importer](https://github.com/Befzz/blender3d_import_psk_psa).
-- Loveslove for early testing.
+- Developers of the original UE map import scripts.
+- Befzz for the Blender PSK/PSA importer foundation.
 
-# Disclaimer
-3D assets and maps used by most of the games are copyrighted property of game's owners.
-This software does not promote asset piracy and is intended for artistic and research purposes only.
+## Disclaimer
+
+Game assets and maps are copyrighted by their respective owners.
+This software is intended for artistic, archival, and research workflows.

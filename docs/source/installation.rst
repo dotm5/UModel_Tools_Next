@@ -1,6 +1,6 @@
 Installation
 ========================================
-In order to install ``umodel_tools`` you need to perform a few steps depending on the chosen type of installation.
+In order to install ``UModel Tools Next`` you need to perform a few steps depending on the chosen type of installation.
 
 Installing a pre-packed distribution
 -----------------------------------------
@@ -11,14 +11,14 @@ performed on it. It is installed as a regular Blender
 .. note::
     Blender 3.4 or newer is required for the add-on to run.
 
-1. Download a release distribution from the `releases <https://github.com/skarndev/umodel_tools/releases>`_ page.
+1. Download a release distribution from the `releases <https://github.com/dotm5/UModel_Tools_Next/releases>`_ page.
 2. Install the addon.
 
 Installing from .zip archive
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 1. In Blender, go to ``Edit -> Preferences... -> Add-ons -> Install``.
 2. In the file dialog window select the addon's .zip archive.
-3. Search ``umodel_tools`` in the search field, and enable the add-on.
+3. Search ``UModel Tools Next`` in the search field, and enable the add-on.
 
 Installing manually
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -29,7 +29,7 @@ Installing manually
 
 2. Copy the contents of the released distribution into the ``addons`` directory.
 3. In Blender, go to ``Edit -> Preferences... -> Add-ons``, click the reload button.
-4. Search ``umodel_tools`` in the search field, and enable the add-on.
+4. Search ``UModel Tools Next`` in the search field, and enable the add-on.
 
 Installing from sources
 -----------------------------------------
@@ -41,8 +41,8 @@ You may want to install the addon from sources if you plan to alter the code, e.
    The version of Python will be printed as the first row.
 2. Make sure `pip <https://pip.pypa.io/en/stable/getting-started/>`_ is installed.
 3. Install `git <https://git-scm.com>`_ into your system, if you do not have it.
-4. Clone the repo with ``git clone https://github.com/skarndev/umodel_tools.git``.
-5. ``cd umodel_tools``
+4. Clone the repo with ``git clone https://github.com/dotm5/UModel_Tools_Next.git``.
+5. ``cd UModel_Tools_Next``
 6. Run the build script with ``python build.py`` or ``python3 build.py``.
 7. Create a symbolic link
    (`Windows

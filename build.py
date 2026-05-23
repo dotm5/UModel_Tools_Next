@@ -62,11 +62,10 @@ def create_distribution(dist_path: t.Optional[str]):
 def build_project(no_req: bool, dist_path: t.Optional[str]):
     start_time = time.time()
 
-    print_info('\nBuilding UModelTools...')
+    print_info('\nBuilding UModel Tools Next...')
     print(f'Python third-party modules: {"OFF" if no_req else "ON"}')
 
     with create_distribution(dist_path):
-        # install required Python modules
         if not no_req:
             print_info('\nInstalling third-party Python modules...')
 
@@ -78,15 +77,30 @@ def build_project(no_req: bool, dist_path: t.Optional[str]):
                         print(f'\nError: failed installing module \"{line}\". See pip error above.')
                         sys.exit(1)
 
+            prune_third_party('umodel_tools/third_party')
+
         else:
             print_info("Warning: Third-party Python modules will not be installed. (--noreq option)")
 
-    print_success("UmodelTools building finished successfully.",
+    print_success("UModel Tools Next building finished successfully.",
                   "Total build time: ", time.strftime("%M minutes %S seconds\a", time.gmtime(time.time() - start_time)))
 
 
+def prune_third_party(third_party_dir: str):
+    """Remove packaging metadata and CLI/test payloads that are not needed inside Blender."""
+    if not os.path.isdir(third_party_dir):
+        return
+
+    for root, dirs, _ in os.walk(third_party_dir):
+        for subdir in list(dirs):
+            if subdir == 'tests' or subdir.endswith('.dist-info'):
+                shutil.rmtree(os.path.join(root, subdir), ignore_errors=True)
+
+    shutil.rmtree(os.path.join(third_party_dir, 'bin'), ignore_errors=True)
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build UModelTools."
+    parser = argparse.ArgumentParser(description="Build UModel Tools Next."
                                                  "\n"
                                                  "\nRequired dependencies are:"
                                                  "\n  pip (https://pip.pypa.io/en/stable/installation/)",

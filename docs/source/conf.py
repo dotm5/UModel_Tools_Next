@@ -5,9 +5,9 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath('../..'))
 
-project = 'umodel_tools'
-copyright = '2023, Skarn'  # pylint: disable=redefined-builtin
-author = 'Skarn'
+project = 'UModel Tools Next'
+copyright = '2023-2026, Skarn and dotm5'  # pylint: disable=redefined-builtin
+author = 'dotm5'
 
 extensions = ['sphinx.ext.autodoc', 'sphinx.ext.coverage', 'sphinx.ext.napoleon',
               'sphinx.ext.intersphinx']
@@ -26,10 +26,10 @@ exclude_patterns = []
 
 # output configuration
 html_theme = "pydata_sphinx_theme"
-html_title = "UModel Tools"
+html_title = "UModel Tools Next"
 
 html_theme_options = {
-    'github_url': "https://github.com/skarndev/umodel_tools",
+    'github_url': "https://github.com/dotm5/UModel_Tools_Next",
     'navigation_depth': 2
 }
 
