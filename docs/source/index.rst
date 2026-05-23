@@ -1,12 +1,13 @@
 
-UModel Tools
+UModel Tools Next
 ========================================
 
 .. image:: images/demo.jpeg
 
-Welcome to ``umodel_tools`` documentation. `umodel_tools <https://github.com/skarndev/umodel_tools>`_
-is a `Blender <https://blender.org>`_ addon featuring import of `Unreal Engine <https://www.unrealengine.com>`_
-games static meshes (stored in-game as .uasset) and maps (stored in-game as .umap).
+Welcome to ``UModel Tools Next`` documentation.
+`UModel Tools Next <https://github.com/dotm5/UModel_Tools_Next>`_
+is dotm5's fork of the original ``umodel_tools`` `Blender <https://blender.org>`_ addon, focused on Unreal Engine
+static mesh and map import workflows with expanded path matching and material reconstruction.
 
 Overview
 ==================

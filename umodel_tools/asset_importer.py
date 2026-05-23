@@ -5,9 +5,9 @@ import shutil
 import contextlib
 import dataclasses
 
-from io_import_scene_unreal_psa_psk_280 import pskimport  # pylint: disable=import-error
 import bpy
 
+from .io_import_scene_unreal_psa_psk_280 import pskimport
 from . import enums
 from . import utils
 from . import asset_db

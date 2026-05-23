@@ -33,11 +33,13 @@ from . import localization  # nopep8 pylint: disable=wrong-import-position
 
 #: Addon description for Blender. Displayed in settings.
 bl_info = {
-    "name": "UModel Tools",
-    "author": "Skarn",
-    "version": (1, 1, 0),
+    "name": "UModel Tools Next",
+    "author": "dotm5 (fork maintainer), Skarn (original author)",
+    "version": (1, 2, 0),
     "blender": (5, 1, 0),
-    "description": "Import Unreal Engine game scenes and assets into Blender",
+    "description": "dotm5 fork of UModel Tools with expanded map import and material reconstruction",
+    "doc_url": "https://github.com/dotm5/UModel_Tools_Next",
+    "tracker_url": "https://github.com/dotm5/UModel_Tools_Next/issues",
     "category": "Import-Export"
 }
 
