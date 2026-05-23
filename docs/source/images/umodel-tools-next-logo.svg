@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 260" role="img" aria-labelledby="title desc">
+  <title id="title">UModel Tools Next</title>
+  <desc id="desc">UModel Tools Next wordmark with a stylized 3D viewport and shader node icon.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="980" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#141821"/>
+      <stop offset="1" stop-color="#222735"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="62" y1="48" x2="204" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1e9bd7"/>
+      <stop offset="1" stop-color="#3dd6b3"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="92" y1="48" x2="174" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9a2f"/>
+      <stop offset="1" stop-color="#f05a28"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+
+  <rect width="980" height="260" rx="34" fill="url(#panel)"/>
+
+  <g transform="translate(36 22)" filter="url(#shadow)">
+    <path d="M42 50 110 30 170 62 154 138 72 156 34 112Z" fill="#101621"/>
+    <path d="M42 50 110 30 170 62 154 138 72 156 34 112Z" fill="none" stroke="url(#cyan)" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M46 108 110 88 162 112M72 154 110 88 110 34M154 136 110 88" fill="none" stroke="#68e8cf" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+    <path d="M60 118 112 102 144 116 92 136Z" fill="#182231" stroke="#83f0d7" stroke-width="3" opacity="0.9"/>
+    <path d="M70 116 102 130M90 110 122 124M80 132 132 114" fill="none" stroke="#4bb6e8" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+
+    <path d="M50 44 74 38 96 50 92 76 66 82 46 68Z" fill="#2a1e16" stroke="url(#orange)" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M50 44 68 58 92 50M68 58 66 82" fill="none" stroke="#ffb86a" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M126 148 C148 142 150 164 168 160M126 148 C142 132 154 136 166 124M126 148 C142 160 142 182 164 186" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
+    <path d="M126 148 C148 142 150 164 168 160" fill="none" stroke="#ff8a2f" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
+    <path d="M126 148 C142 132 154 136 166 124" fill="none" stroke="#31c8e7" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
+    <path d="M126 148 C142 160 142 182 164 186" fill="none" stroke="#8eea6a" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
+    <circle cx="124" cy="148" r="10" fill="#171a24" stroke="#ff8a2f" stroke-width="5"/>
+    <circle cx="168" cy="124" r="10" fill="#171a24" stroke="#31c8e7" stroke-width="5"/>
+    <circle cx="170" cy="160" r="10" fill="#171a24" stroke="#ff8a2f" stroke-width="5"/>
+    <circle cx="166" cy="186" r="10" fill="#171a24" stroke="#8eea6a" stroke-width="5"/>
+  </g>
+
+  <g font-family="Inter, Segoe UI, Arial, sans-serif">
+    <text x="250" y="108" fill="#f6f8fb" font-size="54" font-weight="800">UModel Tools Next</text>
+    <text x="253" y="154" fill="#9ee7dc" font-size="24" font-weight="600">Unreal map recovery for Blender</text>
+    <text x="253" y="192" fill="#b7c0ce" font-size="21">Path matching, packed PBR, DirectX normals, glass, emission hints.</text>
+  </g>
+</svg>

@@ -166,6 +166,7 @@ cython_debug/
 /umodel_win32/
 /*.zip
 /1.ps1
+/envi.png
 /Envi_Wlbl.json
 /probe_blender_api.py
 /probe_blender_api_output.json
