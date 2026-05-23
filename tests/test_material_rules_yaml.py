@@ -3,7 +3,7 @@ import os
 import sys
 
 
-ADDON_ROOT = r"D:\addon"
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 RULE_MODULE_PATH = os.path.join(ADDON_ROOT, "umodel_tools", "material_rules.py")
 GENERIC_RULE_PATH = os.path.join(ADDON_ROOT, "umodel_tools", "game_profiles", "rules", "generic.yaml")
 
@@ -19,6 +19,10 @@ def load_material_rules_module():
 def main():
     material_rules = load_material_rules_module()
     rules = material_rules.load_rule_set(GENERIC_RULE_PATH)
+    fallback_rules = material_rules.load_rule_sets([os.path.join(ADDON_ROOT, "missing_rules.yaml")])
+    fallback_rule = fallback_rules.resolve("D", "T_Example_01")
+    if fallback_rule is None or fallback_rule.name != "diffuse":
+        raise AssertionError("Missing rule datasets should fall back to generic diffuse rules.")
 
     cases = [
         ("D", "T_Example_01", "diffuse"),

@@ -15,7 +15,7 @@ import time
 import typing as t
 
 
-ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 UMODEL_TOOLS_ROOT = os.path.join(ADDON_ROOT, "umodel_tools")
 
 

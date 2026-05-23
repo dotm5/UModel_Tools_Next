@@ -1,10 +1,14 @@
+import os
+import shutil
 import typing as t
 
 import bpy
+import bpy_extras.io_utils
 
 from . import PACKAGE_NAME
 from . import game_profiles
 from . import localization
+from . import material_rules
 from . import missing_asset_report
 
 
@@ -61,6 +65,46 @@ class UMODELTOOLS_UL_game_profiles(bpy.types.UIList):
         layout.prop(game_profile, "name", text="", emboss=False, icon_value=icon)
 
 
+class UMODELTOOLS_PG_material_rule_dataset(bpy.types.PropertyGroup):
+    """Material texture rule dataset settings."""
+
+    name: bpy.props.StringProperty(
+        name="Name",
+        description="Name of the material rule dataset"
+    )
+
+    path: bpy.props.StringProperty(
+        name="Rule YAML Path",
+        description="Path to a material texture rule YAML file",
+        subtype='FILE_PATH'
+    )
+
+    enabled: bpy.props.BoolProperty(
+        name="Enabled",
+        description="Use this dataset when reconstructing material shader nodes",
+        default=True
+    )
+
+
+class UMODELTOOLS_UL_material_rule_datasets(bpy.types.UIList):
+    """UIlist for displaying material rule datasets."""
+
+    def draw_item(self,
+                  _context: bpy.types.Context,
+                  layout: bpy.types.UILayout,
+                  _prefs: 'UMODELTOOLS_AP_addon_preferences',
+                  dataset: UMODELTOOLS_PG_material_rule_dataset,
+                  _icon: str,
+                  _active_prefs: 'UMODELTOOLS_AP_addon_preferences',
+                  _active_propname: str,
+                  _index: int,
+                  _flt_flag: int):
+        row = layout.row(align=True)
+        row.prop(dataset, "enabled", text="")
+        icon = 'CHECKMARK' if os.path.isfile(_normalize_rule_dataset_path(dataset.path)) else 'ERROR'
+        row.prop(dataset, "name", text="", emboss=False, icon=icon)
+
+
 class UMODELTOOLS_OT_actions(bpy.types.Operator):
     """Move items up and down, add and remove"""
 
@@ -108,6 +152,74 @@ class UMODELTOOLS_OT_actions(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class UMODELTOOLS_OT_material_rule_dataset_actions(bpy.types.Operator):
+    """Move and remove material rule datasets."""
+
+    bl_idname = "umodel_tools.material_rule_dataset_action"
+    bl_label = "Material Rule Dataset Actions"
+    bl_description = "Move and remove material rule datasets"
+    bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
+
+    action: bpy.props.EnumProperty(
+        items=(
+            ('UP', "Up", ""),
+            ('DOWN', "Down", ""),
+            ('REMOVE', "Remove", "")
+        )
+    )
+
+    def invoke(self, _context: bpy.types.Context, _event: bpy.types.Event) -> set[str]:
+        addon_prefs = get_addon_preferences()
+        addon_prefs.ensure_material_rule_datasets()
+        idx = addon_prefs.active_material_rule_dataset_index
+
+        try:
+            addon_prefs.material_rule_datasets[idx]
+        except IndexError:
+            return {"FINISHED"}
+
+        if self.action == 'DOWN' and idx < len(addon_prefs.material_rule_datasets) - 1:
+            addon_prefs.material_rule_datasets.move(idx, idx + 1)
+            addon_prefs.active_material_rule_dataset_index += 1
+        elif self.action == 'UP' and idx >= 1:
+            addon_prefs.material_rule_datasets.move(idx, idx - 1)
+            addon_prefs.active_material_rule_dataset_index -= 1
+        elif self.action == 'REMOVE':
+            addon_prefs.material_rule_datasets.remove(idx)
+            if addon_prefs.active_material_rule_dataset_index != 0:
+                addon_prefs.active_material_rule_dataset_index -= 1
+            addon_prefs.ensure_material_rule_datasets()
+
+        return {"FINISHED"}
+
+
+class UMODELTOOLS_OT_add_material_rule_dataset(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
+    """Load a material rule dataset YAML file."""
+
+    bl_idname = "umodel_tools.add_material_rule_dataset"
+    bl_label = "Load Material Rule Dataset"
+    bl_description = "Add a material texture rule YAML dataset"
+    bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
+
+    filename_ext = ".yaml"
+
+    filter_glob: bpy.props.StringProperty(
+        default="*.yaml;*.yml",
+        options={'HIDDEN'},
+        maxlen=255
+    )
+
+    def execute(self, _context: bpy.types.Context) -> set[str]:
+        if not self.filepath:
+            self.report({'ERROR'}, localization.t_report("Asset path was not provided."))
+            return {'CANCELLED'}
+
+        addon_prefs = get_addon_preferences()
+        addon_prefs.add_material_rule_dataset(self.filepath)
+        addon_prefs.active_material_rule_dataset_index = len(addon_prefs.material_rule_datasets) - 1
+        return {"FINISHED"}
+
+
 class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
     """Implements preferences storage for the addon.
     """
@@ -122,6 +234,22 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
 
     active_profile_index: bpy.props.IntProperty(
         default=0
+    )
+
+    material_rule_datasets: bpy.props.CollectionProperty(
+        name="Material Rule Datasets",
+        description="Texture pattern rule YAML datasets used for material reconstruction",
+        type=UMODELTOOLS_PG_material_rule_dataset
+    )
+
+    active_material_rule_dataset_index: bpy.props.IntProperty(
+        default=0
+    )
+
+    show_material_rule_dataset_settings: bpy.props.BoolProperty(
+        name="Show Material Rule Dataset Settings",
+        description="Show material texture rule dataset settings",
+        default=True
     )
 
     display_cur_profile: bpy.props.BoolProperty(
@@ -367,7 +495,48 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         except IndexError:
             return None
 
+    def ensure_material_rule_datasets(self) -> None:
+        if len(self.material_rule_datasets):
+            return
+
+        name, path = _copy_default_rule_dataset_to_user_dir()
+        self.add_material_rule_dataset(path=path, name=name)
+        self.active_material_rule_dataset_index = 0
+
+    def add_material_rule_dataset(self,
+                                  path: str,
+                                  name: str = "",
+                                  enabled: bool = True) -> UMODELTOOLS_PG_material_rule_dataset:
+        normalized_path = _copy_rule_dataset_to_user_dir(path)
+        for index, dataset in enumerate(self.material_rule_datasets):
+            if _same_rule_dataset_path(dataset.path, normalized_path):
+                dataset.enabled = enabled
+                if name:
+                    dataset.name = name
+                self.active_material_rule_dataset_index = index
+                return dataset
+
+        dataset = self.material_rule_datasets.add()
+        dataset.path = normalized_path
+        dataset.name = name or material_rules.dataset_display_name(normalized_path)
+        dataset.enabled = enabled
+        return dataset
+
+    def get_active_material_rule_dataset_paths(self) -> list[str]:
+        self.ensure_material_rule_datasets()
+        paths = [
+            _normalize_rule_dataset_path(dataset.path)
+            for dataset in self.material_rule_datasets
+            if dataset.enabled and dataset.path
+        ]
+        if paths:
+            return paths
+
+        _, fallback_path = _copy_default_rule_dataset_to_user_dir()
+        return [fallback_path]
+
     def draw(self, context: bpy.types.Context):
+        self.ensure_material_rule_datasets()
         layout = self.layout
         layout.prop(self, "display_cur_profile")
         layout.prop(self, "verbose")
@@ -383,6 +552,8 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
                     icon='TRIA_DOWN' if self.show_advanced_import_validation_settings else 'TRIA_RIGHT')
         layout.prop(self, "show_advanced_path_resolution_settings",
                     icon='TRIA_DOWN' if self.show_advanced_path_resolution_settings else 'TRIA_RIGHT')
+        layout.prop(self, "show_material_rule_dataset_settings",
+                    icon='TRIA_DOWN' if self.show_material_rule_dataset_settings else 'TRIA_RIGHT')
 
         if self.show_advanced_import_validation_settings:
             box = layout.box()
@@ -419,6 +590,9 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
                 box.prop(self, "custom_missing_asset_report_directory")
             box.prop(self, "include_actor_context_in_missing_report")
 
+        if self.show_material_rule_dataset_settings:
+            self._draw_material_rule_datasets(layout)
+
         if context.preferences.view.show_developer_ui:
             layout.prop(self, "debug")
 
@@ -445,3 +619,159 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
             layout.prop(game_profile, "game")
             layout.prop(game_profile, "umodel_export_dir")
             layout.prop(game_profile, "asset_dir")
+
+    def _draw_material_rule_datasets(self, layout: bpy.types.UILayout) -> None:
+        box = layout.box()
+        box.label(text=localization.t_iface("Material rule datasets:"))
+
+        row = box.row()
+        row.template_list(
+            "UMODELTOOLS_UL_material_rule_datasets",
+            "",
+            self,
+            "material_rule_datasets",
+            self,
+            "active_material_rule_dataset_index"
+        )
+
+        col = row.column(align=True)
+        col.operator(UMODELTOOLS_OT_add_material_rule_dataset.bl_idname, icon='ADD', text="")
+        col.operator(UMODELTOOLS_OT_material_rule_dataset_actions.bl_idname, icon='REMOVE', text="").action = 'REMOVE'
+
+        col.separator()
+        col.operator(UMODELTOOLS_OT_material_rule_dataset_actions.bl_idname, icon='TRIA_UP', text="").action = 'UP'
+        col.operator(UMODELTOOLS_OT_material_rule_dataset_actions.bl_idname, icon='TRIA_DOWN', text="").action = 'DOWN'
+
+        active_dataset = self._active_material_rule_dataset()
+        if active_dataset is not None:
+            box.prop(active_dataset, "path")
+
+        box.label(
+            text=localization.t_iface("Rule files are copied to the user UTM rule directory."),
+            icon='FILE_FOLDER'
+        )
+
+        enabled_paths = self.get_active_material_rule_dataset_paths()
+        _, fallback_path = _copy_default_rule_dataset_to_user_dir()
+        if enabled_paths == [fallback_path] and not any(
+            dataset.enabled for dataset in self.material_rule_datasets
+        ):
+            box.label(text=localization.t_iface("No enabled datasets; Generic fallback will be used."), icon='INFO')
+
+    def _active_material_rule_dataset(self) -> t.Optional[UMODELTOOLS_PG_material_rule_dataset]:
+        try:
+            return self.material_rule_datasets[self.active_material_rule_dataset_index]
+        except IndexError:
+            return None
+
+
+def _normalize_rule_dataset_path(path: str) -> str:
+    if not path:
+        return ""
+
+    return os.path.abspath(os.path.normpath(bpy.path.abspath(path)))
+
+
+def _copy_default_rule_dataset_to_user_dir() -> tuple[str, str]:
+    name, path = material_rules.default_rule_dataset()
+    return name, _copy_rule_dataset_to_user_dir(path, preferred_name="generic.yaml")
+
+
+def _copy_rule_dataset_to_user_dir(path: str, preferred_name: str = "") -> str:
+    source_path = _normalize_rule_dataset_path(path)
+    if not source_path or not os.path.isfile(source_path):
+        return source_path
+
+    rule_dir = _material_rule_user_dir(create=True)
+    if not rule_dir:
+        return source_path
+
+    try:
+        source_real = os.path.realpath(source_path)
+        rule_dir_real = os.path.realpath(rule_dir)
+        if os.path.commonpath([source_real, rule_dir_real]) == rule_dir_real:
+            return source_path
+    except ValueError:
+        pass
+
+    file_name = _safe_rule_dataset_file_name(preferred_name or os.path.basename(source_path))
+    target_path = _available_rule_dataset_path(rule_dir, file_name, allow_existing=bool(preferred_name))
+    try:
+        if os.path.isfile(target_path):
+            return target_path
+        if not _same_existing_file(source_path, target_path):
+            shutil.copy2(source_path, target_path)
+    except OSError as exc:
+        print(f"Warning: Could not copy material rule dataset to user directory: {exc}")
+        return source_path
+
+    return target_path
+
+
+def _material_rule_user_dir(create: bool = False) -> str:
+    candidates = [
+        os.path.join(os.path.expanduser("~"), "Documents", "Blender", "UTM", "rules"),
+    ]
+
+    try:
+        config_dir = bpy.utils.user_resource(
+            'CONFIG',
+            path=os.path.join("UTM", "rules"),
+            create=create
+        )
+    except (AttributeError, RuntimeError):
+        config_dir = ""
+    if config_dir:
+        candidates.append(config_dir)
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            if create:
+                os.makedirs(candidate, exist_ok=True)
+            if os.path.isdir(candidate):
+                return candidate
+        except OSError:
+            continue
+
+    return ""
+
+
+def _safe_rule_dataset_file_name(file_name: str) -> str:
+    base_name = os.path.basename(file_name) or "material_rules.yaml"
+    stem, ext = os.path.splitext(base_name)
+    if ext.lower() not in {".yaml", ".yml"}:
+        ext = ".yaml"
+
+    safe_stem = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in stem).strip("._")
+    return f"{safe_stem or 'material_rules'}{ext}"
+
+
+def _available_rule_dataset_path(rule_dir: str, file_name: str, allow_existing: bool) -> str:
+    candidate = os.path.join(rule_dir, file_name)
+    if allow_existing or not os.path.exists(candidate):
+        return candidate
+
+    stem, ext = os.path.splitext(file_name)
+    index = 1
+    while True:
+        candidate = os.path.join(rule_dir, f"{stem}_{index}{ext}")
+        if not os.path.exists(candidate):
+            return candidate
+        index += 1
+
+
+def _same_existing_file(first: str, second: str) -> bool:
+    if not os.path.isfile(second):
+        return False
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return False
+
+
+def _same_rule_dataset_path(first: str, second: str) -> bool:
+    return os.path.normcase(_normalize_rule_dataset_path(first)) == os.path.normcase(
+        _normalize_rule_dataset_path(second)
+    )

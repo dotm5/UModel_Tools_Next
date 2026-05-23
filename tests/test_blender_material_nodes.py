@@ -5,8 +5,10 @@ import sys
 import bpy
 
 
-ADDON_ROOT = r"D:\addon"
-EXPORT_DIR = r"D:\UmodelExport"
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+EXPORT_DIR = os.path.abspath(
+    os.environ.get("UMODEL_TEST_EXPORT_DIR", os.path.join(ADDON_ROOT, os.pardir, "UmodelExport"))
+)
 TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_material_nodes")
 GLASS_MATERIAL = (
     r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"

@@ -10,9 +10,9 @@ import sys
 import bpy
 
 
-ADDON_ROOT = r"D:\addon"
-UMODEL_EXPORT_DIR = r"D:\addon\umodel_export_truncated_test"
-TEST_ROOT = r"D:\addon\test_runtime_missing_report"
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+UMODEL_EXPORT_DIR = os.path.join(ADDON_ROOT, "umodel_export_truncated_test")
+TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_missing_report")
 VALID_MESH_OBJECT_PATH = (
     "/PM/Content/PaperMan/Environment/Meshes/Foliage/"
     "S_Envi_common_flowerpot_01a.S_Envi_common_flowerpot_01a"
