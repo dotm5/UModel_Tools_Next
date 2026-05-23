@@ -5,6 +5,12 @@ It focuses on practical Unreal Engine map recovery workflows, stronger UModel/FM
 
 Repository: https://github.com/dotm5/UModel_Tools_Next
 
+## Showcase
+
+![UModel Tools Next imported map and reconstructed shader graph](docs/source/images/readme-blender-shader-overview.jpg)
+
+Imported Unreal map content in Blender, shown alongside the reconstructed material node graph for packed PBR textures, DirectX normal conversion, and shader routing.
+
 ## Features
 
 - Import Unreal Engine map JSON exports and static mesh assets into Blender.
