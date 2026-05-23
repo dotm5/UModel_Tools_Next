@@ -6,7 +6,7 @@ import types
 import bpy
 
 
-ADDON_ROOT = r"D:\addon"
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
 
 class FakeLayout:
@@ -40,7 +40,7 @@ def main():
     sys.path.insert(0, ADDON_ROOT)
     bpy.ops.preferences.addon_enable(module="umodel_tools")
     try:
-        from umodel_tools import operators  # pylint: disable=import-error,import-outside-toplevel
+        from umodel_tools import material_rules, operators  # pylint: disable=import-error,import-outside-toplevel
 
         rna = bpy.ops.umodel_tools.import_unreal_map.get_rna_type()
         selector_rna = bpy.ops.umodel_tools.select_unreal_map_json.get_rna_type()
@@ -95,10 +95,29 @@ def main():
         if storage_items != expected_storage_items:
             raise AssertionError(f"Unexpected import storage items: {storage_items!r}")
 
+        prefs = bpy.context.preferences.addons["umodel_tools"].preferences
+        while len(prefs.material_rule_datasets):
+            prefs.material_rule_datasets.remove(0)
+        prefs.ensure_material_rule_datasets()
+        if len(prefs.material_rule_datasets) != 1:
+            raise AssertionError("Expected Generic material rule dataset to be restored.")
+
+        generic_dataset = prefs.material_rule_datasets[0]
+        normalized_generic_path = os.path.normcase(os.path.abspath(generic_dataset.path))
+        if os.path.normcase(os.path.abspath(material_rules.default_rule_path("generic"))) == normalized_generic_path:
+            raise AssertionError("Generic material rules should be copied to the user UTM rule directory.")
+        if not normalized_generic_path.endswith(os.path.normcase(os.path.join("UTM", "rules", "generic.yaml"))):
+            raise AssertionError(f"Unexpected Generic material rule path: {generic_dataset.path}")
+
+        generic_dataset.enabled = False
+        fallback_paths = prefs.get_active_material_rule_dataset_paths()
+        if not fallback_paths or not os.path.isfile(fallback_paths[0]):
+            raise AssertionError(f"Expected Generic fallback rule path, got {fallback_paths!r}")
+
         fake = types.SimpleNamespace(
             layout=FakeLayout(),
-            filepath=r"E:\CalabiyauGame\Envi_Wlbl.json",
-            umodel_export_dir=r"C:\Users\70560\Downloads\umodel_win32\UmodelExport",
+            filepath=os.path.join(ADDON_ROOT, "sample_maps", "Envi_Wlbl.json"),
+            umodel_export_dir=os.path.join(ADDON_ROOT, "sample_export"),
             game_profile="generic",
             import_storage_mode="LINKED_ASSET_LIBRARY",
             load_pbr_maps=True,
@@ -166,6 +185,13 @@ def main():
         }, indent=2))
         print("TEST_IMPORT_OPERATOR_UI_OK")
     finally:
+        try:
+            prefs = bpy.context.preferences.addons["umodel_tools"].preferences
+            prefs.ensure_material_rule_datasets()
+            if len(prefs.material_rule_datasets):
+                prefs.material_rule_datasets[0].enabled = True
+        except Exception:  # pragma: no cover - best-effort cleanup for Blender prefs.
+            pass
         bpy.ops.preferences.addon_disable(module="umodel_tools")
 
 

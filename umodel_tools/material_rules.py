@@ -53,6 +53,22 @@ class MaterialRuleSet:
         return suffix_matches[0] if suffix_matches else None
 
 
+def load_rule_sets(rule_paths: t.Iterable[str]) -> MaterialRuleSet:
+    rules: list[TextureRule] = []
+    normalized_paths = _deduplicate_paths(rule_paths)
+
+    for rule_path in normalized_paths:
+        try:
+            rules.extend(load_rule_set(rule_path).rules)
+        except (OSError, RuntimeError) as exc:
+            print(f"Warning: Material rule dataset {rule_path!r} could not be loaded: {exc}")
+
+    if not rules:
+        return load_rule_set(default_rule_path("generic"))
+
+    return MaterialRuleSet(rules)
+
+
 def load_rule_set(rule_path: str) -> MaterialRuleSet:
     try:
         import yaml  # pylint: disable=import-outside-toplevel
@@ -71,6 +87,37 @@ def load_rule_set(rule_path: str) -> MaterialRuleSet:
 
 def default_rule_path(name: str) -> str:
     return os.path.join(os.path.dirname(__file__), "game_profiles", "rules", f"{name}.yaml")
+
+
+def default_rule_dataset() -> tuple[str, str]:
+    return "Generic", default_rule_path("generic")
+
+
+def dataset_display_name(rule_path: str) -> str:
+    try:
+        import yaml  # pylint: disable=import-outside-toplevel
+        with open(rule_path, mode="r", encoding="utf-8") as rule_file:
+            data = yaml.safe_load(rule_file) or {}
+    except (ImportError, OSError, RuntimeError):
+        return os.path.splitext(os.path.basename(rule_path))[0] or "Material Rules"
+
+    name = str(data.get("name", "")).strip() if isinstance(data, dict) else ""
+    return name or os.path.splitext(os.path.basename(rule_path))[0] or "Material Rules"
+
+
+def _deduplicate_paths(rule_paths: t.Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    unique_paths: list[str] = []
+    for rule_path in rule_paths:
+        if not rule_path:
+            continue
+        normalized = os.path.abspath(os.path.normpath(rule_path))
+        key = os.path.normcase(normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_paths.append(normalized)
+    return tuple(unique_paths)
 
 
 def _parse_texture_rule(raw_rule: t.Any, rule_path: str) -> TextureRule:

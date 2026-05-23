@@ -2,6 +2,7 @@
 
 import typing as t
 import dataclasses
+import os
 
 import bpy
 import lark
@@ -14,7 +15,8 @@ from .. import props_txt_parser
 GAME_NAME = "Generic"
 GAME_DESCRIPTION = "Provides basic support for any Unreal Engine game"
 
-RULE_SET = material_rules.load_rule_set(material_rules.default_rule_path("generic"))
+_RULE_SET_CACHE_KEY: tuple[str, ...] | None = None
+_RULE_SET_CACHE: material_rules.MaterialRuleSet | None = None
 
 
 @dataclasses.dataclass
@@ -128,7 +130,31 @@ def end_process_material(mat: bpy.types.Material):
 # Non-interface functions below
 
 def _resolve_rule(tex_type: str, tex_short_name: str) -> material_rules.TextureRule | None:
-    return RULE_SET.resolve(tex_type, tex_short_name)
+    return _active_rule_set().resolve(tex_type, tex_short_name)
+
+
+def _active_rule_set() -> material_rules.MaterialRuleSet:
+    global _RULE_SET_CACHE_KEY, _RULE_SET_CACHE  # pylint: disable=global-statement
+
+    rule_paths = _active_rule_paths()
+    cache_key = tuple(
+        f"{path}:{os.path.getmtime(path) if os.path.isfile(path) else 'missing'}"
+        for path in rule_paths
+    )
+    if _RULE_SET_CACHE is not None and cache_key == _RULE_SET_CACHE_KEY:
+        return _RULE_SET_CACHE
+
+    _RULE_SET_CACHE = material_rules.load_rule_sets(rule_paths)
+    _RULE_SET_CACHE_KEY = cache_key
+    return _RULE_SET_CACHE
+
+
+def _active_rule_paths() -> tuple[str, ...]:
+    try:
+        prefs = utils.preferences.get_addon_preferences()
+        return tuple(prefs.get_active_material_rule_dataset_paths())
+    except Exception:  # pragma: no cover - Blender preferences may be unavailable in isolated probes.
+        return (material_rules.default_rule_path("generic"),)
 
 
 def _create_rule_nodes(mat: bpy.types.Material, rule: material_rules.TextureRule) -> dict[str, bpy.types.Node]:

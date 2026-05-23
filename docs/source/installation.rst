@@ -23,7 +23,7 @@ Installing from .zip archive
 Installing manually
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 1. Go to Blender add-on installation directory. On Windows, it is normally located at
-   ``C:\Users\{$User}\AppData\Roaming\Blender Foundation\{$BlenderVersion}\scripts\addons\``,
+   ``%APPDATA%\Blender Foundation\Blender\{$BlenderVersion}\scripts\addons``,
    on Mac or Linux you can find it at ``/home/{$User}/.config/blender/{$BlenderVersion}/scripts/addons/``.
    If it does not exist, create it.
 

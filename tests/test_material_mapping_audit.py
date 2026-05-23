@@ -5,14 +5,16 @@ import sys
 import tempfile
 
 
-ADDON_ROOT = r"D:\addon"
-EXPORT_DIR = r"D:\UmodelExport"
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+EXPORT_DIR = os.path.abspath(
+    os.environ.get("UMODEL_TEST_EXPORT_DIR", os.path.join(ADDON_ROOT, os.pardir, "UmodelExport"))
+)
 MAP_PATH_CANDIDATES = [
     os.path.join(EXPORT_DIR, "Envi_Wlbl.json"),
     os.path.join(ADDON_ROOT, "Envi_Wlbl.json"),
 ]
 MAP_PATH = next((path for path in MAP_PATH_CANDIDATES if os.path.exists(path)), MAP_PATH_CANDIDATES[0])
-SCRIPT_PATH = os.path.join(ADDON_ROOT, "scripts", "audit_material_mappings.py")
+SCRIPT_PATH = os.path.join(ADDON_ROOT, "scripts", "audit", "audit_material_mappings.py")
 
 
 def main():

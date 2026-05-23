@@ -3,14 +3,37 @@ import sys
 import importlib.util
 
 
-ADDON_ROOT = r"D:\addon"
+ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+EXPORT_DIR = os.path.abspath(
+    os.environ.get("UMODEL_TEST_EXPORT_DIR", os.path.join(ADDON_ROOT, os.pardir, "UmodelExport"))
+)
 GLASS_PROPS = (
-    r"D:\UmodelExport\PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
-    r"\MI_PM_Glass_03b.props.txt"
+    os.path.join(
+        EXPORT_DIR,
+        "PM",
+        "Content",
+        "PaperMan",
+        "Environment",
+        "Materials",
+        "Maps",
+        "Apartment",
+        "Wlbl",
+        "MI_PM_Glass_03b.props.txt",
+    )
 )
 WATER_PROPS = (
-    r"D:\UmodelExport\PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
-    r"\MI_Envi_Wlbl_Water_01.props.txt"
+    os.path.join(
+        EXPORT_DIR,
+        "PM",
+        "Content",
+        "PaperMan",
+        "Environment",
+        "Materials",
+        "Maps",
+        "Apartment",
+        "Wlbl",
+        "MI_Envi_Wlbl_Water_01.props.txt",
+    )
 )
 
 
