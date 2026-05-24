@@ -3,9 +3,10 @@ import inspect
 import pkgutil
 import importlib
 from pathlib import Path
-from ordered_set import OrderedSet
 
 import bpy
+
+from ._ordered_set import OrderedSet
 
 
 __all__ = (
@@ -16,6 +17,7 @@ __all__ = (
 
 MODULES_TO_IGNORE = (
     "third_party",
+    "vendor_inline",
     "test"
 )
 
