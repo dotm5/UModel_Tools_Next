@@ -11,6 +11,13 @@ EXPORT_DIR = os.path.abspath(
     os.environ.get("UMODEL_TEST_EXPORT_DIR", os.path.join(ADDON_ROOT, os.pardir, "UmodelExport"))
 )
 TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_material_nodes")
+CALABIYAU_RULE_PATH = os.path.join(
+    ADDON_ROOT,
+    "umodel_tools",
+    "game_profiles",
+    "rules",
+    "calabiyau_game.yaml",
+)
 GLASS_MATERIAL = (
     r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
     r"\MI_PM_Glass_03b.props.txt"
@@ -63,6 +70,7 @@ class MaterialNodeImporter:
 
 def main():
     _enable_source_addon()
+    _enable_calabiyau_rules()
 
     from umodel_tools import asset_db, asset_importer, umodel_path_resolver  # pylint: disable=import-error,import-outside-toplevel
 
@@ -215,6 +223,12 @@ def _enable_source_addon():
     sys.path.insert(0, ADDON_ROOT)
     addon_utils.modules_refresh()
     bpy.ops.preferences.addon_enable(module="umodel_tools")
+
+
+def _enable_calabiyau_rules():
+    prefs = bpy.context.preferences.addons["umodel_tools"].preferences
+    prefs.ensure_material_rule_datasets()
+    prefs.add_material_rule_dataset(CALABIYAU_RULE_PATH)
 
 
 def _load_material(path):

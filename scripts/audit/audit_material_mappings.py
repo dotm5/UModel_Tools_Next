@@ -78,7 +78,11 @@ def main() -> None:
         if args.strict_exact else umodel_path_resolver.AGGRESSIVE,
         enable_suffix_index=True,
     )
-    rule_set = material_rules.load_rule_set(material_rules.default_rule_path(args.rules))
+    rule_set = material_rules.load_rule_sets(
+        material_rules.default_rule_path(rule_name.strip())
+        for rule_name in args.rules.split(",")
+        if rule_name.strip()
+    )
 
     map_paths = _expand_map_paths(args.maps)
     rows = []
@@ -565,7 +569,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rules",
         default="generic",
-        help="Material rule YAML name under umodel_tools/game_profiles/rules.",
+        help="Comma-separated material rule YAML names under umodel_tools/game_profiles/rules.",
     )
     parser.add_argument(
         "--include-all",

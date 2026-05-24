@@ -5,7 +5,7 @@
 # UModel Tools Next
 
 UModel Tools Next is dotm5's fork of the UModel Tools Blender add-on.
-It turns UModel and FModel exports into a more practical Blender map recovery pipeline, with stronger path matching, local single-file imports, and broader shader reconstruction for packed Unreal texture patterns.
+It turns UModel and FModel exports into a more practical Blender map recovery pipeline, with stronger path matching, local single-file imports, and layered shader-rule reconstruction for packed Unreal texture patterns.
 
 Repository: https://github.com/dotm5/UModel_Tools_Next
 
@@ -13,7 +13,7 @@ Repository: https://github.com/dotm5/UModel_Tools_Next
 
 - Recovers Unreal Engine map JSON exports into Blender scenes, including static mesh placement and reusable asset caches.
 - Matches assets across UModel/FModel-style export layouts, local single-file imports, and mixed path conventions.
-- Reconstructs common packed PBR material layouts, including ORM/RMO masks, roughness/metallic/specular routing, and alpha-packed emission masks.
+- Reconstructs common packed PBR material layouts, with optional creator rule datasets for game-specific texture names and channel packing.
 - Converts DirectX normal maps for Blender's OpenGL-style tangent space.
 - Applies shader hints for glass, water, emissive, foliage-like alpha, and other Unreal material patterns.
 - Produces missing-asset diagnostics so incomplete exports are easier to fix instead of silently failing.
@@ -31,7 +31,7 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 - Blender asset cache generation and reuse for repeated map recovery work.
 - UModel/FModel path inference for exports that do not share one exact directory shape.
 - PBR shader reconstruction from Unreal texture parameter patterns.
-- Packed ORM/RMO support, DirectX normal conversion, glass/water hints, and packed diffuse alpha emission masks.
+- Packed mask support, DirectX normal conversion, glass/water hints, and packed diffuse alpha emission masks.
 - Missing-asset reports for diagnosing partial or inconsistent exports.
 
 ## Packaging
