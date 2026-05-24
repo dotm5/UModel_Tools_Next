@@ -7,7 +7,6 @@ import dataclasses
 
 import bpy
 
-from .io_import_scene_unreal_psa_psk_280 import pskimport
 from . import enums
 from . import utils
 from . import asset_db
@@ -17,6 +16,10 @@ from . import umodel_path_resolver
 from . import localization
 from . import missing_asset_report
 from . import material_shader_hints
+from . import import_cache
+from . import library_linker
+from . import texture_path_utils
+from . import psk_importer
 
 
 LINKED_ASSET_LIBRARY = "LINKED_ASSET_LIBRARY"
@@ -153,49 +156,23 @@ def _remove_default_principled_nodes(mat: bpy.types.Material,
 
 
 def _material_cache_is_current(material_lib_path: str) -> bool:
-    if not os.path.isfile(material_lib_path):
-        return False
-
-    try:
-        with bpy.data.libraries.load(filepath=material_lib_path, link=False) as (data_from, data_to):
-            if not data_from.materials:
-                return False
-            data_to.materials = [data_from.materials[0]]
-
-        material = data_to.materials[0]
-        try:
-            return int(material.get(MATERIAL_CACHE_VERSION_KEY, 0)) == MATERIAL_CACHE_VERSION
-        finally:
-            bpy.data.materials.remove(material, do_unlink=True)
-    except Exception:  # pragma: no cover - corrupt cache should be rebuilt during interactive imports.
-        return False
+    return import_cache.material_cache_is_current(
+        material_lib_path,
+        MATERIAL_CACHE_VERSION_KEY,
+        MATERIAL_CACHE_VERSION,
+    )
 
 
 def _remove_loaded_material_library(material_lib_path: str) -> None:
-    normalized_path = os.path.normcase(os.path.abspath(material_lib_path))
-    for material in list(bpy.data.materials):
-        library = getattr(material, "library", None)
-        if library is None:
-            continue
-        library_path = os.path.normcase(os.path.abspath(bpy.path.abspath(library.filepath)))
-        if library_path == normalized_path:
-            bpy.data.materials.remove(material, do_unlink=True)
+    library_linker.remove_loaded_material_library(material_lib_path)
 
 
 def _remove_loaded_asset_library(asset_lib_path: str) -> None:
-    normalized_path = os.path.normcase(os.path.abspath(asset_lib_path))
-    for obj in list(bpy.data.objects):
-        library = getattr(obj, "library", None)
-        if library is None:
-            continue
-        library_path = os.path.normcase(os.path.abspath(bpy.path.abspath(library.filepath)))
-        if library_path == normalized_path:
-            bpy.data.objects.remove(obj, do_unlink=True)
+    library_linker.remove_loaded_asset_library(asset_lib_path)
 
 
 def _is_diffuse_texture_path(tex_path: str) -> bool:
-    stem = os.path.splitext(os.path.basename(tex_path))[0].lower()
-    return stem.endswith(("_d", "_d2", "_bc", "_basecolor", "_basecolour", "_diffuse", "_albedo"))
+    return texture_path_utils.is_diffuse_texture_path(tex_path)
 
 
 class AssetImporter:
@@ -260,42 +237,27 @@ class AssetImporter:
         self._last_import_report = missing_asset_report.ImportReport()
 
     def _path_cache_key(self, path: str) -> str:
-        return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+        return import_cache.path_cache_key(path)
 
     def _linked_library_cache_key(self, lib_filepath: str, dtype: type[bpy.types.ID]) -> tuple[str, str]:
-        return (self._path_cache_key(lib_filepath), dtype.__name__)
+        return library_linker.linked_library_cache_key(lib_filepath, dtype)
 
     def _linked_libraries_search_cached(
         self,
         lib_filepath: str,
         dtype: type[bpy.types.ID],
     ) -> bpy.types.ID | None:
-        key = self._linked_library_cache_key(lib_filepath, dtype)
-        cached = self._linked_library_cache.get(key)
-        if cached is not None:
-            try:
-                # Touching the name catches removed Blender RNA references.
-                _ = cached.name
-                return cached
-            except ReferenceError:
-                self._linked_library_cache.pop(key, None)
-
-        data_block = utils.linked_libraries_search(lib_filepath, dtype)
-        if data_block is not None:
-            self._linked_library_cache[key] = data_block
-        return data_block
+        return library_linker.linked_libraries_search_cached(
+            self._linked_library_cache,
+            lib_filepath,
+            dtype,
+        )
 
     def _remember_linked_library(self, lib_filepath: str, data_block: bpy.types.ID | None) -> None:
-        if data_block is None:
-            return
-        self._linked_library_cache[
-            self._linked_library_cache_key(lib_filepath, type(data_block))
-        ] = data_block
+        library_linker.remember_linked_library(self._linked_library_cache, lib_filepath, data_block)
 
     def _forget_linked_library(self, lib_filepath: str) -> None:
-        path_key = self._path_cache_key(lib_filepath)
-        for key in [cache_key for cache_key in self._linked_library_cache if cache_key[0] == path_key]:
-            self._linked_library_cache.pop(key, None)
+        library_linker.forget_linked_library(self._linked_library_cache, lib_filepath)
 
     def _is_asset_cache_stale_cached(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
         key = self._path_cache_key(asset_path_abs)
@@ -566,26 +528,11 @@ class AssetImporter:
         return True
 
     def _asset_cache_is_current(self, asset_path_abs: str) -> bool:
-        try:
-            with bpy.data.libraries.load(filepath=asset_path_abs, link=False) as (data_from, data_to):
-                if not data_from.objects:
-                    return False
-                data_to.objects = [data_from.objects[0]]
-
-            obj = data_to.objects[0]
-            mesh = getattr(obj, "data", None)
-            materials = list(mesh.materials) if mesh is not None and hasattr(mesh, "materials") else []
-            try:
-                return int(obj.get(ASSET_CACHE_VERSION_KEY, 0)) == ASSET_CACHE_VERSION
-            finally:
-                bpy.data.objects.remove(obj, do_unlink=True)
-                if mesh is not None and mesh.users == 0:
-                    bpy.data.meshes.remove(mesh, do_unlink=True)
-                for material in materials:
-                    if material is not None and material.users == 0:
-                        bpy.data.materials.remove(material, do_unlink=True)
-        except Exception:  # pragma: no cover - corrupt cache should be rebuilt during interactive imports.
-            return False
+        return import_cache.asset_cache_is_current(
+            asset_path_abs,
+            ASSET_CACHE_VERSION_KEY,
+            ASSET_CACHE_VERSION,
+        )
 
     def _asset_cache_source_paths(self, asset_path: str, umodel_export_dir: str) -> list[str]:
         source_paths: list[str] = []
@@ -1003,9 +950,9 @@ class AssetImporter:
         utils.verbose_print(f"Importing \"{found_path}\"")
 
         with contextlib.redirect_stdout(io.StringIO()):
-            if not pskimport(filepath=found_path,
-                             context=context,
-                             bImportbone=False):
+            if not psk_importer.import_psk(filepath=found_path,
+                                           context=context,
+                                           bImportbone=False):
                 raise RuntimeError(f"Error: Failed importing asset {found_path} due to unknown reason.")
 
         obj = context.object
