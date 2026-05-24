@@ -19,7 +19,10 @@ SCRIPT_PATH = os.path.join(ADDON_ROOT, "scripts", "audit", "audit_material_mappi
 
 def main():
     audit = _load_module("audit_material_mappings_test", SCRIPT_PATH)
-    rule_set = audit.material_rules.load_rule_set(audit.material_rules.default_rule_path("generic"))
+    rule_set = audit.material_rules.load_rule_sets([
+        audit.material_rules.default_rule_path("generic"),
+        audit.material_rules.default_rule_path("calabiyau_game"),
+    ])
     settings = audit.umodel_path_resolver.UModelPathInferenceSettings(
         enable_umodel_path_inference=True,
         path_inference_mode=audit.umodel_path_resolver.AGGRESSIVE,

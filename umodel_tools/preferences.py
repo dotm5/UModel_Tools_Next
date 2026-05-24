@@ -507,6 +507,8 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
             return
 
         self.add_material_rule_dataset(path=path, name=name)
+        optional_name, optional_path = _copy_calabiyau_rule_dataset_to_user_dir()
+        self.add_material_rule_dataset(path=optional_path, name=optional_name, enabled=False)
         self.active_material_rule_dataset_index = 0
 
     def add_material_rule_dataset(self,
@@ -683,6 +685,14 @@ def _copy_default_rule_dataset_to_user_dir() -> tuple[str, str]:
     return name, _copy_rule_dataset_to_user_dir(path, preferred_name="generic.yaml")
 
 
+def _copy_calabiyau_rule_dataset_to_user_dir() -> tuple[str, str]:
+    path = material_rules.default_rule_path("calabiyau_game")
+    return material_rules.dataset_display_name(path), _copy_rule_dataset_to_user_dir(
+        path,
+        preferred_name="calabiyau_game.yaml",
+    )
+
+
 def _copy_rule_dataset_to_user_dir(path: str, preferred_name: str = "") -> str:
     source_path = _normalize_rule_dataset_path(path)
     if not source_path or not os.path.isfile(source_path):
@@ -824,7 +834,13 @@ def _looks_like_legacy_builtin_rule_dataset(text: str) -> bool:
     return (
         text.startswith("name: Generic\n")
         and "description: Common Unreal material texture rules." in text
-        and legacy_rmo_block in text
+        and (
+            legacy_rmo_block in text
+            or "        - cloud tex\n" in text
+            or "        - maintex\n" in text
+            or "        - t_ledtex\n" in text
+            or "  - name: rmo\n" in text
+        )
     )
 
 

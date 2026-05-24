@@ -3,6 +3,7 @@ import os
 import sys
 import types
 
+import addon_utils
 import bpy
 
 
@@ -37,7 +38,14 @@ class FakeLayout:
 
 
 def main():
+    addon_utils.disable("umodel_tools", default_set=False)
+    for module_name in list(sys.modules):
+        if module_name == "umodel_tools" or module_name.startswith("umodel_tools."):
+            del sys.modules[module_name]
+    if ADDON_ROOT in sys.path:
+        sys.path.remove(ADDON_ROOT)
     sys.path.insert(0, ADDON_ROOT)
+    addon_utils.modules_refresh()
     bpy.ops.preferences.addon_enable(module="umodel_tools")
     try:
         from umodel_tools import material_rules, operators  # pylint: disable=import-error,import-outside-toplevel
@@ -99,8 +107,8 @@ def main():
         while len(prefs.material_rule_datasets):
             prefs.material_rule_datasets.remove(0)
         prefs.ensure_material_rule_datasets()
-        if len(prefs.material_rule_datasets) != 1:
-            raise AssertionError("Expected Generic material rule dataset to be restored.")
+        if len(prefs.material_rule_datasets) != 2:
+            raise AssertionError("Expected bundled material rule datasets to be restored.")
 
         generic_dataset = prefs.material_rule_datasets[0]
         normalized_generic_path = os.path.normcase(os.path.abspath(generic_dataset.path))
@@ -108,6 +116,15 @@ def main():
             raise AssertionError("Generic material rules should be copied to the user UTM rule directory.")
         if not normalized_generic_path.endswith(os.path.normcase(os.path.join("UTM", "rules", "generic.yaml"))):
             raise AssertionError(f"Unexpected Generic material rule path: {generic_dataset.path}")
+
+        calabiyau_dataset = prefs.material_rule_datasets[1]
+        normalized_calabiyau_path = os.path.normcase(os.path.abspath(calabiyau_dataset.path))
+        if not normalized_calabiyau_path.endswith(
+            os.path.normcase(os.path.join("UTM", "rules", "calabiyau_game.yaml"))
+        ):
+            raise AssertionError(f"Unexpected CalabiyauGame material rule path: {calabiyau_dataset.path}")
+        if calabiyau_dataset.enabled:
+            raise AssertionError("CalabiyauGame material rules should be available but disabled by default.")
 
         generic_dataset.enabled = False
         fallback_paths = prefs.get_active_material_rule_dataset_paths()

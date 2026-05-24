@@ -13,41 +13,15 @@ texture_rules:
         - base colour
         - base colour map
         - basecolor
-        - basecolor_low
         - basecolour
         - diffuse
         - diffuse map
         - diffuse and alpha
         - diffuseandalpha
-        - blend base
-        - blendbase
-        - main texture
-        - main tex
-        - maintex
-        - maintexture
-        - surface tex
-        - surface texture
-        - surfacetex
-        - inside tex
-        - inside texture
-        - insidetex
-        - crystal content tex
-        - crystalcontenttex
-        - matcap tex
-        - matcaptex
-        - content texture
-        - contenttexture
-        - jingti map
-        - jingti_map
-        - cloud tex
-        - cloudtex
-        - cloud texture
-        - cloudtexture
         - albedo
         - albedo map
       suffixes:
         - d
-        - d2
         - bc
         - basecolor
         - basecolour
@@ -67,8 +41,6 @@ texture_rules:
         - normal map
         - normal texture
         - normalmap
-        - normalmapa
-        - normalmapb
         - tangent normal
         - tangentnormal
         - bump
@@ -112,13 +84,10 @@ texture_rules:
         - ambientocclusionroughnessmetallic
         - ao_r_m_mask
         - ao r m mask
-        - blend_ao_r_m_mask
-        - blend ao r m mask
       suffixes:
         - orm
         - occlusionroughnessmetallic
         - ao_r_m_mask
-        - blend_ao_r_m_mask
     nodes:
       split: ShaderNodeSeparateColor
     connections:
@@ -130,37 +99,6 @@ texture_rules:
         to: bsdf.Metallic
       - from: image.Color
         to: split.Color
-
-  - name: rmo
-    prefer_suffix: true
-    match:
-      param_names:
-        - rmo
-        - ao roughness metallic height
-        - aoroughnessmetallicheight
-        - roughness metallic occlusion
-        - roughnessmetallicocclusion
-        - roughness metalness occlusion
-        - roughnessmetalnessocclusion
-      suffixes:
-        - rmo
-        - roughnessmetallicocclusion
-    nodes:
-      split: ShaderNodeSeparateColor
-      displacement: ShaderNodeDisplacement
-    connections:
-      - from: split.Red
-        to: ao_mix.Color2
-      - from: split.Green
-        to: bsdf.Roughness
-      - from: split.Blue
-        to: bsdf.Metallic
-      - from: image.Color
-        to: split.Color
-      - from: displacement.Displacement
-        to: output.Displacement
-      - from: image.Alpha
-        to: displacement.Height
 
   - name: mroh
     prefer_suffix: true
@@ -323,31 +261,11 @@ texture_rules:
         - alpha
         - alpha texture
         - alpha tex
-        - alphamaska_tex
-        - alphamaskb_tex
         - mask
         - mask map
         - opacity
         - opacity mask
         - opacity mask texture
-        - dissolve map
-        - dissolvemap
-        - dissolve mask
-        - dissolvemask
-        - dissolve tex
-        - dissolvetex
-        - noise tex
-        - noise texture
-        - noisetex
-        - main tex uv noise tex
-        - maintexuvnoise_tex
-        - vertex noise
-        - t-noise_wall
-        - t-noise_wallmask
-        - maskrg
-        - edge highlight mask
-        - edgehighlightmask
-        - alpha mask a
         - cutout
         - transparency
         - transparent
@@ -358,28 +276,6 @@ texture_rules:
         - opacitymask
         - cutout
         - transparency
-    nodes:
-      transparent: ShaderNodeBsdfTransparent
-      mix_shader: ShaderNodeMixShader
-      split: ShaderNodeSeparateColor
-    connections:
-      - from: image.Color
-        to: split.Color
-      - from: split.Red
-        to: mix_shader.Fac
-      - from: transparent.BSDF
-        to: mix_shader.Shader
-      - from: bsdf.BSDF
-        to: mix_shader.Shader_001
-      - from: mix_shader.Shader
-        to: output.Surface
-
-  - name: alpha_mask
-    match:
-      suffixes:
-        - m
-        - maska
-        - maskb
     nodes:
       transparent: ShaderNodeBsdfTransparent
       mix_shader: ShaderNodeMixShader
@@ -447,8 +343,6 @@ texture_rules:
         - emission
         - emission map
         - glow
-        - led tex
-        - t_ledtex
         - self illumination
         - self illuminated
       suffixes:
