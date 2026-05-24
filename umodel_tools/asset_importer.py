@@ -27,7 +27,7 @@ WARN_SKIP = "WARN_SKIP"
 USE_PLACEHOLDER = "USE_PLACEHOLDER"
 FAIL_IMPORT = "FAIL_IMPORT"
 
-MATERIAL_CACHE_VERSION = 4
+MATERIAL_CACHE_VERSION = 7
 MATERIAL_CACHE_VERSION_KEY = "umodel_tools_material_cache_version"
 ASSET_CACHE_VERSION = 4
 ASSET_CACHE_VERSION_KEY = "umodel_tools_asset_cache_version"
@@ -193,6 +193,11 @@ def _remove_loaded_asset_library(asset_lib_path: str) -> None:
             bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def _is_diffuse_texture_path(tex_path: str) -> bool:
+    stem = os.path.splitext(os.path.basename(tex_path))[0].lower()
+    return stem.endswith(("_d", "_d2", "_bc", "_basecolor", "_basecolour", "_diffuse", "_albedo"))
+
+
 class AssetImporter:
     """Implements functionality of asset import from UModel output.
        Intended to be inherited a bpy.types.Operator subclass.
@@ -230,6 +235,9 @@ class AssetImporter:
     _missing_warning_paths: set[tuple[str, str]] = set()
     _missing_warning_printed_count: int = 0
     _local_loaded_assets: dict[str, bpy.types.Object] = {}
+    _linked_library_cache: dict[tuple[str, str], bpy.types.ID] = {}
+    _asset_cache_current: dict[str, bool] = {}
+    _material_cache_current: dict[str, bool] = {}
     _missing_asset_reporter: missing_asset_report.MissingAssetReporter | None = None
     _missing_asset_context: dict[str, t.Any] = {}
     _last_missing_resolution: umodel_path_resolver.ResolvedUModelPath | None = None
@@ -243,10 +251,67 @@ class AssetImporter:
         self._missing_warning_paths = set()
         self._missing_warning_printed_count = 0
         self._local_loaded_assets = {}
+        self._linked_library_cache = {}
+        self._asset_cache_current = {}
+        self._material_cache_current = {}
         self._missing_asset_reporter = None
         self._missing_asset_context = {}
         self._last_missing_resolution = None
         self._last_import_report = missing_asset_report.ImportReport()
+
+    def _path_cache_key(self, path: str) -> str:
+        return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+    def _linked_library_cache_key(self, lib_filepath: str, dtype: type[bpy.types.ID]) -> tuple[str, str]:
+        return (self._path_cache_key(lib_filepath), dtype.__name__)
+
+    def _linked_libraries_search_cached(
+        self,
+        lib_filepath: str,
+        dtype: type[bpy.types.ID],
+    ) -> bpy.types.ID | None:
+        key = self._linked_library_cache_key(lib_filepath, dtype)
+        cached = self._linked_library_cache.get(key)
+        if cached is not None:
+            try:
+                # Touching the name catches removed Blender RNA references.
+                _ = cached.name
+                return cached
+            except ReferenceError:
+                self._linked_library_cache.pop(key, None)
+
+        data_block = utils.linked_libraries_search(lib_filepath, dtype)
+        if data_block is not None:
+            self._linked_library_cache[key] = data_block
+        return data_block
+
+    def _remember_linked_library(self, lib_filepath: str, data_block: bpy.types.ID | None) -> None:
+        if data_block is None:
+            return
+        self._linked_library_cache[
+            self._linked_library_cache_key(lib_filepath, type(data_block))
+        ] = data_block
+
+    def _forget_linked_library(self, lib_filepath: str) -> None:
+        path_key = self._path_cache_key(lib_filepath)
+        for key in [cache_key for cache_key in self._linked_library_cache if cache_key[0] == path_key]:
+            self._linked_library_cache.pop(key, None)
+
+    def _is_asset_cache_stale_cached(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
+        key = self._path_cache_key(asset_path_abs)
+        if key not in self._asset_cache_current:
+            self._asset_cache_current[key] = not self._is_asset_cache_stale(
+                asset_path_abs=asset_path_abs,
+                asset_path=asset_path,
+                umodel_export_dir=umodel_export_dir,
+            )
+        return not self._asset_cache_current[key]
+
+    def _is_material_cache_current_cached(self, material_lib_path: str) -> bool:
+        key = self._path_cache_key(material_lib_path)
+        if key not in self._material_cache_current:
+            self._material_cache_current[key] = _material_cache_is_current(material_lib_path)
+        return self._material_cache_current[key]
 
     def _op_message(self, msg_type: t.Literal['INFO'] | t.Literal['ERROR'] | t.Literal['WARNING'], msg: str):
         """Print operator message and return the associated status-code.
@@ -438,24 +503,27 @@ class AssetImporter:
         storage_mode = getattr(self, "import_storage_mode", LINKED_ASSET_LIBRARY)
 
         try:
-            if os.path.isfile(asset_path_abs) and self._is_asset_cache_stale(
+            if os.path.isfile(asset_path_abs) and self._is_asset_cache_stale_cached(
                 asset_path_abs=asset_path_abs,
                 asset_path=asset_path,
                 umodel_export_dir=umodel_export_dir,
             ):
                 self._local_loaded_assets.pop(asset_path_abs, None)
+                self._asset_cache_current.pop(self._path_cache_key(asset_path_abs), None)
+                self._forget_linked_library(asset_path_abs)
                 _remove_loaded_asset_library(asset_path_abs)
                 os.remove(asset_path_abs)
 
             if not os.path.isfile(asset_path_abs):
                 self._import_asset_to_library(context=context, asset_library_dir=asset_dir, asset_path=asset_path,
                                               umodel_export_dir=umodel_export_dir, db=db, game_profile=game_profile)
+                self._asset_cache_current[self._path_cache_key(asset_path_abs)] = True
 
             if load:
                 if storage_mode in {LOCAL_SINGLE_FILE, APPEND_AS_LOCAL}:
                     return self._load_asset_as_local(asset_path_abs)
 
-                if (linked_data := utils.linked_libraries_search(asset_path_abs, bpy.types.Object)):
+                if (linked_data := self._linked_libraries_search_cached(asset_path_abs, bpy.types.Object)):
                     return linked_data
 
                 with utils.redirect_cstdout():
@@ -463,7 +531,9 @@ class AssetImporter:
                         data_to.objects = list(data_from.objects)
                         assert len(data_to.objects) == 1
 
-                    return data_to.objects[0]
+                    obj = data_to.objects[0]
+                    self._remember_linked_library(asset_path_abs, obj)
+                    return obj
 
             return None
 
@@ -616,6 +686,8 @@ class AssetImporter:
         shutil.copyfile(tex_umodel_path, tex_lib_path)
 
         img = bpy.data.images.load(filepath=tex_lib_path)
+        if _is_diffuse_texture_path(tex_path):
+            img.alpha_mode = "CHANNEL_PACKED"
         img.asset_mark()
         img.asset_data.catalog_id = db.uid_for_entry(os.path.dirname(tex_path))
         # img.asset_generate_preview()
@@ -762,6 +834,9 @@ class AssetImporter:
             new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
 
         for tex_type, tex_path_and_name in texture_infos.items():
+            if shader_hint is not None:
+                continue
+
             tex_path_no_ext, tex_short_name = os.path.splitext(tex_path_and_name)
 
             # skip non-diffuse textures if we do not import PBR
@@ -814,7 +889,7 @@ class AssetImporter:
                         raise AssetImportPolicyError(msg)
                     continue
 
-            if (img := utils.linked_libraries_search(tex_lib_blend_path, bpy.types.Image)) is None:
+            if (img := self._linked_libraries_search_cached(tex_lib_blend_path, bpy.types.Image)) is None:
                 # load datablock from the library
                 with utils.redirect_cstdout():
                     with bpy.data.libraries.load(filepath=tex_lib_blend_path, link=True) as (data_from, data_to):
@@ -822,6 +897,7 @@ class AssetImporter:
                         data_to.images = [data_from.images[0]]
 
                     img = data_to.images[0]
+                    self._remember_linked_library(tex_lib_blend_path, img)
 
             img_node = new_mat.node_tree.nodes.new('ShaderNodeTexImage')
             img_node.image = img
@@ -1032,7 +1108,9 @@ class AssetImporter:
 
                 try:
                     # add material to asset library if does not exist
-                    if not _material_cache_is_current(material_lib_path):
+                    if not self._is_material_cache_current_cached(material_lib_path):
+                        self._material_cache_current.pop(self._path_cache_key(material_lib_path), None)
+                        self._forget_linked_library(material_lib_path)
                         _remove_loaded_material_library(material_lib_path)
                         self._import_material_to_library(material_name=material_name,
                                                          material_path_local=material_path_local,
@@ -1040,8 +1118,9 @@ class AssetImporter:
                                                          umodel_export_dir=umodel_export_dir,
                                                          asset_library_dir=asset_library_dir,
                                                          game_profile=game_profile)
+                        self._material_cache_current[self._path_cache_key(material_lib_path)] = True
 
-                    if (new_mat := utils.linked_libraries_search(material_lib_path, bpy.types.Material)) is None:
+                    if (new_mat := self._linked_libraries_search_cached(material_lib_path, bpy.types.Material)) is None:
                         # load material from the library
                         with utils.redirect_cstdout():
                             with bpy.data.libraries.load(filepath=material_lib_path, link=True) as (data_from, data_to):
@@ -1049,6 +1128,7 @@ class AssetImporter:
                                 data_to.materials = [data_from.materials[0]]
 
                             new_mat = data_to.materials[0]
+                            self._remember_linked_library(material_lib_path, new_mat)
 
                 except FileNotFoundError as e:
                     self._import_stats.missing_material_count += 1

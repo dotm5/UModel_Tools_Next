@@ -245,6 +245,7 @@ def audit_material_ref(map_path: str,
     parent_reference = props_txt_parser.extract_parent_reference(desc_ast)
     scalars = props_txt_parser.extract_scalar_parameters(desc_ast)
     vectors = props_txt_parser.extract_vector_parameters(desc_ast)
+    static_switches = props_txt_parser.extract_static_switch_parameters(desc_ast)
     blend_mode = base_prop_overrides.get("BlendMode") if base_prop_overrides else None
     shader_hint = material_shader_hints.infer_shader_hint(
         material_name=material_name,
@@ -279,6 +280,10 @@ def audit_material_ref(map_path: str,
             unrecognized.append(f"{tex_param}={tex_ref}")
             continue
 
+        if _rule_disabled_by_static_switch(rule, static_switches):
+            recognized.append(f"{tex_param}->{rule.name}(disabled)")
+            continue
+
         recognized.append(f"{tex_param}->{rule.name}")
         if rule.diffuse:
             has_diffuse = True
@@ -293,7 +298,15 @@ def audit_material_ref(map_path: str,
     row["unrecognized_texture_params"] = ";".join(unrecognized)
     row["missing_texture_params"] = ";".join(missing_texture_params)
     row["shader_plan"] = _shader_plan_from_blend(blend_mode)
-    row["node_summary"] = _node_summary_for_rules(rule_set, texture_infos, has_ao, blend_mode, scalars, vectors)
+    row["node_summary"] = _node_summary_for_rules(
+        rule_set,
+        texture_infos,
+        has_ao,
+        blend_mode,
+        scalars,
+        vectors,
+        static_switches,
+    )
 
     fallback_reasons = []
     suggestions = []
@@ -432,13 +445,16 @@ def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
                             has_ao: bool,
                             blend_mode: str | None,
                             scalars: dict[str, float],
-                            vectors: dict[str, props_txt_parser.Color]) -> str:
+                            vectors: dict[str, props_txt_parser.Color],
+                            static_switches: dict[str, bool]) -> str:
     parts = []
     if texture_infos:
         for tex_param, tex_ref in sorted(texture_infos.items()):
             tex_path_no_ext, tex_short_name = os.path.splitext(tex_ref)
             rule = rule_set.resolve(tex_param, tex_short_name)
             if rule is None:
+                continue
+            if _rule_disabled_by_static_switch(rule, static_switches):
                 continue
             for connection in rule.connections:
                 if _skip_rule_connection(rule, connection, blend_mode):
@@ -468,6 +484,27 @@ def _skip_rule_connection(rule: material_rules.TextureRule,
         and connection.source == "image.Alpha"
         and connection.target == "bsdf.Alpha"
     )
+
+
+def _rule_disabled_by_static_switch(rule: material_rules.TextureRule,
+                                    static_switches: dict[str, bool]) -> bool:
+    if rule.name == "normal" and _static_switch_is_disabled(static_switches, "usenormal", "use normal"):
+        return True
+
+    if (
+        rule.name in {"orm", "rmo", "mroh", "mro", "rm", "sro"}
+        and _static_switch_is_disabled(static_switches, "useorm", "use orm")
+    ):
+        return True
+
+    return False
+
+
+def _static_switch_is_disabled(static_switches: dict[str, bool], *names: str) -> bool:
+    for name in names:
+        if static_switches.get(name.lower()) is False:
+            return True
+    return False
 
 
 def _uses_packed_diffuse_alpha_emission(blend_mode: str | None,

@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import typing as t
@@ -496,10 +497,15 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
             return None
 
     def ensure_material_rule_datasets(self) -> None:
+        name, path = _copy_default_rule_dataset_to_user_dir()
         if len(self.material_rule_datasets):
+            for dataset in self.material_rule_datasets:
+                if _same_rule_dataset_path(dataset.path, path):
+                    dataset.path = path
+                    if not dataset.name:
+                        dataset.name = name
             return
 
-        name, path = _copy_default_rule_dataset_to_user_dir()
         self.add_material_rule_dataset(path=path, name=name)
         self.active_material_rule_dataset_index = 0
 
@@ -698,9 +704,14 @@ def _copy_rule_dataset_to_user_dir(path: str, preferred_name: str = "") -> str:
     target_path = _available_rule_dataset_path(rule_dir, file_name, allow_existing=bool(preferred_name))
     try:
         if os.path.isfile(target_path):
+            if preferred_name and _should_refresh_managed_rule_dataset(source_path, target_path):
+                shutil.copy2(source_path, target_path)
+                _write_rule_dataset_hash(target_path)
             return target_path
         if not _same_existing_file(source_path, target_path):
             shutil.copy2(source_path, target_path)
+            if preferred_name:
+                _write_rule_dataset_hash(target_path)
     except OSError as exc:
         print(f"Warning: Could not copy material rule dataset to user directory: {exc}")
         return source_path
@@ -769,6 +780,77 @@ def _same_existing_file(first: str, second: str) -> bool:
         return os.path.samefile(first, second)
     except OSError:
         return False
+
+
+def _should_refresh_managed_rule_dataset(source_path: str, target_path: str) -> bool:
+    source_text = _read_text(source_path)
+    target_text = _read_text(target_path)
+    if not source_text or not target_text or target_text == source_text:
+        return False
+
+    stored_hash = _read_text(_rule_dataset_hash_path(target_path)).strip()
+    if stored_hash and stored_hash == _sha256_text(target_text):
+        return True
+
+    return _looks_like_legacy_builtin_rule_dataset(target_text)
+
+
+def _looks_like_legacy_builtin_rule_dataset(text: str) -> bool:
+    legacy_rmo_block = (
+        "  - name: rmo\n"
+        "    prefer_suffix: true\n"
+        "    match:\n"
+        "      param_names:\n"
+        "        - rmo\n"
+        "        - roughness metallic occlusion\n"
+        "        - roughnessmetallicocclusion\n"
+        "        - roughness metalness occlusion\n"
+        "        - roughnessmetalnessocclusion\n"
+        "      suffixes:\n"
+        "        - rmo\n"
+        "        - roughnessmetallicocclusion\n"
+        "    nodes:\n"
+        "      split: ShaderNodeSeparateColor\n"
+        "    connections:\n"
+        "      - from: split.Red\n"
+        "        to: bsdf.Roughness\n"
+        "      - from: split.Green\n"
+        "        to: bsdf.Metallic\n"
+        "      - from: split.Blue\n"
+        "        to: ao_mix.Color2\n"
+        "      - from: image.Color\n"
+        "        to: split.Color\n"
+    )
+    return (
+        text.startswith("name: Generic\n")
+        and "description: Common Unreal material texture rules." in text
+        and legacy_rmo_block in text
+    )
+
+
+def _write_rule_dataset_hash(path: str) -> None:
+    text = _read_text(path)
+    if not text:
+        return
+
+    with open(_rule_dataset_hash_path(path), mode="w", encoding="utf-8") as file:
+        file.write(_sha256_text(text))
+
+
+def _rule_dataset_hash_path(path: str) -> str:
+    return f"{path}.sha256"
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _read_text(path: str) -> str:
+    try:
+        with open(path, mode="r", encoding="utf-8") as file:
+            return file.read()
+    except OSError:
+        return ""
 
 
 def _same_rule_dataset_path(first: str, second: str) -> bool:
