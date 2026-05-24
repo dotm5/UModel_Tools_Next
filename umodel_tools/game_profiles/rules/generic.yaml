@@ -39,6 +39,10 @@ texture_rules:
         - contenttexture
         - jingti map
         - jingti_map
+        - cloud tex
+        - cloudtex
+        - cloud texture
+        - cloudtexture
         - albedo
         - albedo map
       suffixes:
@@ -132,6 +136,8 @@ texture_rules:
     match:
       param_names:
         - rmo
+        - ao roughness metallic height
+        - aoroughnessmetallicheight
         - roughness metallic occlusion
         - roughnessmetallicocclusion
         - roughness metalness occlusion
@@ -141,15 +147,20 @@ texture_rules:
         - roughnessmetallicocclusion
     nodes:
       split: ShaderNodeSeparateColor
+      displacement: ShaderNodeDisplacement
     connections:
       - from: split.Red
-        to: bsdf.Roughness
-      - from: split.Green
-        to: bsdf.Metallic
-      - from: split.Blue
         to: ao_mix.Color2
+      - from: split.Green
+        to: bsdf.Roughness
+      - from: split.Blue
+        to: bsdf.Metallic
       - from: image.Color
         to: split.Color
+      - from: displacement.Displacement
+        to: output.Displacement
+      - from: image.Alpha
+        to: displacement.Height
 
   - name: mroh
     prefer_suffix: true

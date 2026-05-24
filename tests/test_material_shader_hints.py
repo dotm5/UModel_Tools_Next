@@ -35,6 +35,34 @@ WATER_PROPS = (
         "MI_Envi_Wlbl_Water_01.props.txt",
     )
 )
+WATER_02_PROPS = (
+    os.path.join(
+        EXPORT_DIR,
+        "PM",
+        "Content",
+        "PaperMan",
+        "Environment",
+        "Materials",
+        "Maps",
+        "Apartment",
+        "Wlbl",
+        "MI_Envi_Wlbl_Water_02.props.txt",
+    )
+)
+SCREEN_PROPS = (
+    os.path.join(
+        EXPORT_DIR,
+        "PM",
+        "Content",
+        "PaperMan",
+        "Environment",
+        "Materials",
+        "Maps",
+        "Apartment",
+        "Wlbl",
+        "MI_Envi_Wlbl_Screen_01a.props.txt",
+    )
+)
 
 
 def main():
@@ -91,6 +119,39 @@ def main():
     if water_hint.color != (0.254322, 0.377898, 0.65625, 1.0):
         raise AssertionError(f"Unexpected water color: {water_hint.color!r}")
 
+    water_02_ast, _, water_02_overrides = props_txt_parser.parse_props_txt(WATER_02_PROPS, mode="MATERIAL")
+    water_02_hint = material_shader_hints.infer_shader_hint(
+        material_name="MI_Envi_Wlbl_Water_02",
+        material_path_local=(
+            r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl\MI_Envi_Wlbl_Water_02.props.txt"
+        ),
+        parent_reference=props_txt_parser.extract_parent_reference(water_02_ast),
+        scalar_parameters=props_txt_parser.extract_scalar_parameters(water_02_ast),
+        vector_parameters=props_txt_parser.extract_vector_parameters(water_02_ast),
+        blend_mode=water_02_overrides.get("BlendMode"),
+    )
+
+    if water_02_hint is None:
+        raise AssertionError("Expected MI_Envi_Wlbl_Water_02 to infer a water glass shader.")
+    if water_02_hint.shader != "glass":
+        raise AssertionError(f"Unexpected water 02 shader: {water_02_hint.shader!r}")
+    if water_02_hint.alpha != 0.8:
+        raise AssertionError(f"Unexpected water 02 alpha: {water_02_hint.alpha!r}")
+    if water_02_hint.color != (0.168213, 0.79363, 0.828125, 1.0):
+        raise AssertionError(f"Unexpected water 02 color: {water_02_hint.color!r}")
+
+    screen_ast, _, _ = props_txt_parser.parse_props_txt(SCREEN_PROPS, mode="MATERIAL")
+    static_switches = props_txt_parser.extract_static_switch_parameters(screen_ast)
+    expected_switches = {
+        "usenormal": False,
+        "useorm": False,
+        "alpha is emissive?": True,
+    }
+    for name, expected in expected_switches.items():
+        actual = static_switches.get(name)
+        if actual is not expected:
+            raise AssertionError(f"Unexpected static switch {name!r}: {actual!r}")
+
     print("TEST_MATERIAL_SHADER_HINTS_OK")
 
 
@@ -107,4 +168,8 @@ if __name__ == "__main__":
         raise SystemExit(f"Missing test fixture: {GLASS_PROPS}")
     if not os.path.exists(WATER_PROPS):
         raise SystemExit(f"Missing test fixture: {WATER_PROPS}")
+    if not os.path.exists(WATER_02_PROPS):
+        raise SystemExit(f"Missing test fixture: {WATER_02_PROPS}")
+    if not os.path.exists(SCREEN_PROPS):
+        raise SystemExit(f"Missing test fixture: {SCREEN_PROPS}")
     main()

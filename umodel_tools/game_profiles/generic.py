@@ -27,6 +27,7 @@ class MaterialContext:
     blend_mode: str | None
     scalar_parameters: dict[str, float]
     vector_parameters: dict[str, props_txt_parser.Color]
+    static_switch_parameters: dict[str, bool]
     linked_maps: set[str] = dataclasses.field(default_factory=set)
 
 
@@ -41,6 +42,7 @@ def process_material(mat: bpy.types.Material, desc_ast: lark.Tree, use_pbr: bool
         blend_mode=_extract_blend_mode(desc_ast),
         scalar_parameters=props_txt_parser.extract_scalar_parameters(desc_ast),
         vector_parameters=props_txt_parser.extract_vector_parameters(desc_ast),
+        static_switch_parameters=props_txt_parser.extract_static_switch_parameters(desc_ast),
     )
 
 
@@ -67,6 +69,10 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
     if rule is None:
         return
 
+    if _should_skip_rule(mat_ctx, rule):
+        mat.node_tree.nodes.remove(img_node)
+        return
+
     # do not connect the same texture purpose twice
     if rule.name in mat_ctx.linked_maps:
         return
@@ -85,6 +91,7 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
 
     for connection in rule.connections:
         if _should_skip_connection(mat_ctx, rule, connection):
+            _treat_diffuse_alpha_as_data(img_node)
             _route_packed_diffuse_alpha(mat, mat_ctx, img_node)
             continue
 
@@ -178,6 +185,30 @@ def _should_skip_connection(mat_ctx: MaterialContext,
     return False
 
 
+def _should_skip_rule(mat_ctx: MaterialContext,
+                      rule: material_rules.TextureRule) -> bool:
+    if rule.name == "alpha_mask" and not _material_uses_texture_alpha(mat_ctx.blend_mode):
+        return True
+
+    if rule.name == "normal" and _static_switch_is_disabled(mat_ctx, "usenormal", "use normal"):
+        return True
+
+    if (
+        rule.name in {"orm", "rmo", "mroh", "mro", "rm", "sro"}
+        and _static_switch_is_disabled(mat_ctx, "useorm", "use orm")
+    ):
+        return True
+
+    return False
+
+
+def _static_switch_is_disabled(mat_ctx: MaterialContext, *names: str) -> bool:
+    for name in names:
+        if mat_ctx.static_switch_parameters.get(name.lower()) is False:
+            return True
+    return False
+
+
 def _material_uses_texture_alpha(blend_mode: str | None) -> bool:
     if blend_mode == "BLEND_Opaque (0)":
         return False
@@ -206,6 +237,17 @@ def _route_packed_diffuse_alpha(mat: bpy.types.Material,
     multiply.inputs[1].default_value = emission_level
     mat.node_tree.links.new(img_node.outputs["Alpha"], multiply.inputs[0])
     mat.node_tree.links.new(multiply.outputs[0], strength_socket)
+
+
+def _treat_diffuse_alpha_as_data(img_node: bpy.types.ShaderNodeTexImage) -> None:
+    image = img_node.image
+    if image is None:
+        return
+
+    try:
+        image.alpha_mode = "CHANNEL_PACKED"
+    except (AttributeError, TypeError):
+        pass
 
 
 def _material_uses_packed_diffuse_alpha_emission(mat_ctx: MaterialContext) -> bool:

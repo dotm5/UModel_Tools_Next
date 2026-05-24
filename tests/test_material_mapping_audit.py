@@ -44,6 +44,12 @@ def main():
     if water_row["map_file"] != MAP_PATH:
         raise AssertionError(f"Expected map_file to be populated: {water_row['map_file']!r}")
 
+    water_02_row = _find_row(rows, "S_Envi_Wlbl_Water_01a_41", "MI_Envi_Wlbl_Water_02")
+    if water_02_row["shader_plan"] != "glass":
+        raise AssertionError(f"Expected second water material to use glass shader: {water_02_row}")
+    if "mix_shader.Fac=0.2" not in water_02_row["node_summary"]:
+        raise AssertionError(f"Expected translucent water mix summary: {water_02_row['node_summary']!r}")
+
     glass_row = _find_row(rows, "S_Envi_Wlbl_Indoor_01k_5", "MI_PM_Glass_03b")
     if glass_row["shader_plan"] != "glass":
         raise AssertionError(f"Expected glass material to use glass shader: {glass_row}")
@@ -57,6 +63,24 @@ def main():
         raise AssertionError(f"Opaque packed diffuse alpha should not feed BSDF alpha: {mouse_row}")
     if "D:image.Alpha->bsdf.Emission Strength" not in mouse_row["node_summary"]:
         raise AssertionError(f"Opaque packed diffuse alpha should feed emission strength: {mouse_row}")
+
+    screen_row = _find_material_row(rows, "MI_Envi_Wlbl_Screen_01a")
+    if "ORM->orm(disabled)" not in screen_row["matched_rules"]:
+        raise AssertionError(f"Expected disabled ORM switch to be reported: {screen_row}")
+    if "ORM:" in screen_row["node_summary"]:
+        raise AssertionError(f"UseORM=false should remove ORM node links: {screen_row}")
+    if "ao_mix.Result->bsdf.Base Color" in screen_row["node_summary"]:
+        raise AssertionError(f"UseORM=false should not keep AO multiply summary: {screen_row}")
+
+    cloud_h_row = _find_row(rows, "S_Envi_Wlbl_Clouds_01H", "MI_Envi_Wlbl_Clouds_03")
+    if "CloudTex->diffuse" not in cloud_h_row["matched_rules"]:
+        raise AssertionError(f"Expected CloudTex to map as diffuse: {cloud_h_row}")
+    if "CloudTex:image.Color" not in cloud_h_row["node_summary"]:
+        raise AssertionError(f"Expected cloud color node link: {cloud_h_row}")
+
+    cloud_i_row = _find_row(rows, "S_Envi_Wlbl_Clouds_01I", "MI_Envi_Wlbl_Clouds_02")
+    if "CloudTex->diffuse" not in cloud_i_row["matched_rules"]:
+        raise AssertionError(f"Expected null override to fall back to mesh CloudTex material: {cloud_i_row}")
 
     suspicious_rows = [
         row for row in rows
@@ -87,6 +111,13 @@ def _find_row(rows, actor_name, material_name):
         if row["actor_name"] == actor_name and row["material_name"] == material_name:
             return row
     raise AssertionError(f"Missing audit row for {actor_name!r} / {material_name!r}")
+
+
+def _find_material_row(rows, material_name):
+    for row in rows:
+        if row["material_name"] == material_name:
+            return row
+    raise AssertionError(f"Missing audit row for material {material_name!r}")
 
 
 def _load_module(name, path):

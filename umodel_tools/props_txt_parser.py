@@ -169,6 +169,34 @@ def extract_vector_parameters(ast: lark.Tree) -> dict[str, Color]:
     return values
 
 
+def extract_static_switch_parameters(ast: lark.Tree) -> dict[str, bool]:
+    values = {}
+
+    static_parameters = _top_level_struct(ast, 'StaticParameters')
+    if static_parameters is None:
+        return values
+
+    static_switches = _struct_value(static_parameters, 'StaticSwitchParameters')
+    if static_switches is None or static_switches.data != 'structured_block':
+        return values
+
+    for parameter in static_switches.children:
+        _, _, switch = parameter.children
+        if switch.data != 'structured_block':
+            continue
+
+        name = _parameter_name(switch)
+        value = _struct_value(switch, 'Value')
+        if name is None or value is None or value.data != 'const':
+            continue
+
+        raw_value = _const_value(value).lower()
+        if raw_value in {'true', 'false'}:
+            values[name.lower()] = raw_value == 'true'
+
+    return values
+
+
 def _verbose_print(*args: t.Any) -> None:
     try:
         from . import utils  # pylint: disable=import-outside-toplevel
@@ -179,6 +207,15 @@ def _verbose_print(*args: t.Any) -> None:
         utils.verbose_print(*args)
     except Exception:  # pragma: no cover - addon preferences may not be registered in headless tests.
         return
+
+
+def _top_level_struct(ast: lark.Tree, name: str) -> lark.Tree | None:
+    for child in ast.children:
+        def_name, _, value = child.children
+        if def_name == name and value.data == 'structured_block':
+            return value
+
+    return None
 
 
 def _iter_parameter_blocks(ast: lark.Tree, block_name: str) -> t.Iterator[lark.Tree]:

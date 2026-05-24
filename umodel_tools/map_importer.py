@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import time
 import typing as t
 import enum
 
@@ -13,6 +14,7 @@ from . import asset_importer
 from . import utils
 from . import localization
 from . import missing_asset_report
+from . import world_environment
 
 
 def split_object_path(object_path):
@@ -60,6 +62,24 @@ def create_light_data(name: t.Any, ue_light_type: str) -> bpy.types.Light | None
         return None
 
     return bpy.data.lights.new(name=utils.normalize_ue_name(name, fallback="Light"), type=blender_light_type)
+
+
+def _apply_world_environment_to_visible_scenes(context: bpy.types.Context, json_object: t.Any) -> int:
+    scenes: list[bpy.types.Scene] = []
+    for scene in (
+        getattr(context, "scene", None),
+        getattr(bpy.context, "scene", None),
+        getattr(getattr(context, "window", None), "scene", None),
+    ):
+        if scene is not None and scene.name not in {item.name for item in scenes}:
+            scenes.append(scene)
+
+    applied = 0
+    for scene in scenes:
+        if world_environment.apply_world_environment(scene, json_object):
+            applied += 1
+
+    return applied
 
 
 class InstanceTransform:
@@ -695,89 +715,128 @@ class MapImporter(asset_importer.AssetImporter):
         import_failed = False
         with open(map_path, mode='r', encoding='utf-8') as file:
             json_object = json.load(file)
+            world_environment_applied = _apply_world_environment_to_visible_scenes(context, json_object)
+            if world_environment_applied:
+                print(
+                    "World environment summary: procedural sky texture configured from map settings "
+                    f"for {world_environment_applied} scene(s)."
+                )
+            else:
+                print("World environment summary: no supported map sky/fog settings found.")
 
             # handle the different entity types (mehses, lights, etc)
             with utils.std_out_err_redirect_tqdm() as orig_stdout:
-                for entity in tqdm.tqdm(json_object,
-                                        desc=(
-                                            f"{localization.t_report('Importing map')} "
-                                            f"\"{os.path.splitext(os.path.basename(map_path))[0]}\""
-                                        ),
-                                        file=orig_stdout,
-                                        dynamic_ncols=True,
-                                        ascii=True):
-                    if import_failed:
-                        break
+                total_entities = len(json_object)
+                progress_owner = getattr(context, "window_manager", None)
+                if progress_owner is not None:
+                    progress_owner.progress_begin(0, total_entities)
+                static_mesh_seen = 0
+                last_progress_print = time.monotonic()
+                try:
+                    for entity_index, entity in enumerate(
+                        tqdm.tqdm(
+                            json_object,
+                            desc=(
+                                f"{localization.t_report('Importing map')} "
+                                f"\"{os.path.splitext(os.path.basename(map_path))[0]}\""
+                            ),
+                            file=orig_stdout,
+                            dynamic_ncols=True,
+                            ascii=True,
+                        ),
+                        start=1,
+                    ):
+                        if progress_owner is not None and (entity_index % 25 == 0 or entity_index == total_entities):
+                            progress_owner.progress_update(entity_index)
 
-                    if not entity.get('Type', None):
-                        continue
-
-                    entity_type = entity.get('Type')
-
-                    # static meshes
-                    if entity_type in StaticMesh.static_mesh_types:
-                        static_mesh = StaticMesh(json_object, entity, entity_type)
-                        self._set_missing_asset_context(
-                            actor_name=entity.get("Name", entity.get("Outer", "")),
-                            actor_object_path=entity.get("ObjectPath", ""),
-                            component_name=entity_type,
-                            component_object_path=static_mesh.raw_object_path,
-                            instance_index="",
-                        )
-
-                        if static_mesh.invalid:
-                            utils.verbose_print(f"Info: Skipping instance of {static_mesh.entity_name}. "
-                                                "Invalid property.")
-                            continue
-
-                        try:
-                            obj = self._load_asset(
-                                context=context,
-                                asset_dir=asset_dir,
-                                asset_path=static_mesh.asset_path,
-                                umodel_export_dir=umodel_export_dir,
-                                load=True,
-                                db=db,
-                                game_profile=game_profile
-                            )
-                        except asset_importer.AssetImportPolicyError as exc:
-                            print(f"Error: {exc}")
-                            import_failed = True
+                        if import_failed:
                             break
 
-                        if obj is None:
-                            skipped_count = static_mesh.expected_instance_count
-                            self._import_stats.missing_mesh_count += 1
-                            self._import_stats.skipped_instances += skipped_count
-                            msg = (f"Warning: Skipping {skipped_count} instance(s) of {static_mesh.entity_name} "
-                                   f"because mesh \"{static_mesh.asset_path}\" was not found.")
-                            self._record_missing_asset(
-                                resource_type="mesh",
-                                json_asset_path=static_mesh.raw_object_path or static_mesh.asset_path,
-                                message=msg,
-                                fallback_used="skipped_instance",
-                                resolution=self._last_missing_resolution,
+                        if not entity.get('Type', None):
+                            continue
+
+                        entity_type = entity.get('Type')
+
+                        # static meshes
+                        if entity_type in StaticMesh.static_mesh_types:
+                            static_mesh_seen += 1
+                            now = time.monotonic()
+                            if static_mesh_seen % 100 == 0 or now - last_progress_print >= 30.0:
+                                print(
+                                    "Map import progress: "
+                                    f"entity={entity_index}/{total_entities}, "
+                                    f"static_mesh={static_mesh_seen}, "
+                                    f"imported_instances={self._import_stats.imported_instance_count}, "
+                                    f"missing_mesh={self._import_stats.missing_mesh_count}",
+                                    flush=True,
+                                )
+                                last_progress_print = now
+
+                            static_mesh = StaticMesh(json_object, entity, entity_type)
+                            self._set_missing_asset_context(
+                                actor_name=entity.get("Name", entity.get("Outer", "")),
+                                actor_object_path=entity.get("ObjectPath", ""),
                                 component_name=entity_type,
+                                component_object_path=static_mesh.raw_object_path,
+                                instance_index="",
                             )
-                            if self._missing_policy_fails("mesh"):
-                                print(f"Error: Missing mesh policy failed import for {static_mesh.asset_path}.")
+
+                            if static_mesh.invalid:
+                                utils.verbose_print(f"Info: Skipping instance of {static_mesh.entity_name}. "
+                                                    "Invalid property.")
+                                continue
+
+                            try:
+                                obj = self._load_asset(
+                                    context=context,
+                                    asset_dir=asset_dir,
+                                    asset_path=static_mesh.asset_path,
+                                    umodel_export_dir=umodel_export_dir,
+                                    load=True,
+                                    db=db,
+                                    game_profile=game_profile
+                                )
+                            except asset_importer.AssetImportPolicyError as exc:
+                                print(f"Error: {exc}")
                                 import_failed = True
                                 break
-                            continue
 
-                        imported_objects = static_mesh.link_object_instance(obj, import_collection)
-                        self._import_stats.imported_instance_count += len(imported_objects)
+                            if obj is None:
+                                skipped_count = static_mesh.expected_instance_count
+                                self._import_stats.missing_mesh_count += 1
+                                self._import_stats.skipped_instances += skipped_count
+                                msg = (f"Warning: Skipping {skipped_count} instance(s) of {static_mesh.entity_name} "
+                                       f"because mesh \"{static_mesh.asset_path}\" was not found.")
+                                self._record_missing_asset(
+                                    resource_type="mesh",
+                                    json_asset_path=static_mesh.raw_object_path or static_mesh.asset_path,
+                                    message=msg,
+                                    fallback_used="skipped_instance",
+                                    resolution=self._last_missing_resolution,
+                                    component_name=entity_type,
+                                )
+                                if self._missing_policy_fails("mesh"):
+                                    print(f"Error: Missing mesh policy failed import for {static_mesh.asset_path}.")
+                                    import_failed = True
+                                    break
+                                continue
 
-                    # lights
-                    elif entity_type in GameLight.light_types:
-                        light = GameLight(json_object, entity)
+                            imported_objects = static_mesh.link_object_instance(obj, import_collection)
+                            self._import_stats.imported_instance_count += len(imported_objects)
 
-                        if light.invalid:
-                            utils.verbose_print(f"Info: Skipping instance of {light.entity_name}. "
-                                                "Invalid property.")
-                            continue
+                        # lights
+                        elif entity_type in GameLight.light_types:
+                            light = GameLight(json_object, entity)
 
-                        light.import_light(import_collection)
+                            if light.invalid:
+                                utils.verbose_print(f"Info: Skipping instance of {light.entity_name}. "
+                                                    "Invalid property.")
+                                continue
+
+                            light.import_light(import_collection)
+                finally:
+                    if progress_owner is not None:
+                        progress_owner.progress_end()
 
         if import_failed:
             self._finish_map_import_report(import_collection)
@@ -787,6 +846,9 @@ class MapImporter(asset_importer.AssetImporter):
         bpy.app.timers.register(self._library_reload, first_interval=0.010)
         if getattr(self, "report_path_resolution_stats", True):
             print(f"{localization.t_report('Path resolution summary')}: {self._path_resolve_stats.summary()}")
+
+        if world_environment_applied:
+            _apply_world_environment_to_visible_scenes(context, json_object)
 
         self._finish_map_import_report(import_collection)
 

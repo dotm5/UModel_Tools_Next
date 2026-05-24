@@ -48,6 +48,8 @@ def main():
         ("MatCapTex", "T_Character_MatCap", "diffuse"),
         ("ContentTexture", "T_Envi_Dirac_Decal_06f", "diffuse"),
         ("jingti_Map", "T_DefaultWhite_Gamma", "diffuse"),
+        ("CloudTex", "T_Envi_Wlbl_Clouds_01", "diffuse"),
+        ("Cloud Texture", "T_Envi_Wlbl_Clouds_01", "diffuse"),
         ("alpha", "T_Envi_Wlbl_keyboard_03b_Mask", "alpha_mask"),
         ("Alpha", "T_Envi_Fyz_Wall_01a_M", "alpha_mask"),
         ("DissolveMap", "T_Noise_0009", "alpha_mask"),
@@ -91,6 +93,19 @@ def main():
     }
     if normal_connections != expected_normal_connections:
         raise AssertionError(f"Unexpected DirectX normal conversion graph: {normal_connections!r}")
+
+    rmo_rule = rules.resolve("RMO", "T_Example_RMO")
+    rmo_connections = {(connection.source, connection.target) for connection in rmo_rule.connections}
+    expected_rmo_connections = {
+        ("image.Color", "split.Color"),
+        ("split.Red", "ao_mix.Color2"),
+        ("split.Green", "bsdf.Roughness"),
+        ("split.Blue", "bsdf.Metallic"),
+        ("image.Alpha", "displacement.Height"),
+        ("displacement.Displacement", "output.Displacement"),
+    }
+    if rmo_connections != expected_rmo_connections:
+        raise AssertionError(f"Unexpected RMO channel graph: {rmo_connections!r}")
 
     print("TEST_MATERIAL_RULES_YAML_OK")
 
