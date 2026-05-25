@@ -20,6 +20,7 @@ from . import localization
 from . import umodel_path_resolver
 from . import missing_asset_report
 from . import game_profiles
+from .mesh_backends import registry as mesh_backend_registry
 
 
 def _get_object_aabb_verts(obj: bpy.types.Object) -> list[tuple[float, float, float]]:
@@ -43,6 +44,7 @@ _IMPORT_PARAM_CACHE_FIELDS = (
     "load_pbr_maps",
     "texture_format",
     "import_backface_culling",
+    "import_skeletal_mesh_as_static_fallback",
     "path_inference_mode",
     "missing_mesh_policy",
     "missing_material_policy",
@@ -285,12 +287,14 @@ class UMODELTOOLS_OT_import_unreal_assets(asset_importer.AssetImporter, bpy.type
         if not os.path.isdir(asset_sub_dir_abs):
             return self._op_message('ERROR', f"Path {asset_sub_dir_abs} does not exist.")
 
+        supported_mesh_extensions = mesh_backend_registry.get_supported_mesh_extensions()
+
         # count assets to be imported for progress bar display purposes
         total_models = 0
         for root, _, files in os.walk(asset_sub_dir_abs):
             for file in files:
                 _, ext = os.path.splitext(file)
-                if ext not in {'.psk', '.pskx'}:
+                if ext.lower() not in supported_mesh_extensions:
                     continue
 
                 total_models += 1
@@ -302,7 +306,7 @@ class UMODELTOOLS_OT_import_unreal_assets(asset_importer.AssetImporter, bpy.type
                 for root, _, files in os.walk(asset_sub_dir_abs):
                     for file in files:
                         file_base, ext = os.path.splitext(file)
-                        if ext not in {'.psk', '.pskx'}:
+                        if ext.lower() not in supported_mesh_extensions:
                             continue
 
                         file_abs = os.path.join(root, file_base) + '.uasset'
@@ -506,6 +510,15 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
         default=True
     )
 
+    import_skeletal_mesh_as_static_fallback: bpy.props.BoolProperty(
+        name="Import Skeletal Meshes as Static Fallback",
+        description=(
+            "Place SkeletalMeshComponent geometry as static map meshes while skipping armatures, "
+            "morph targets, and animations"
+        ),
+        default=True
+    )
+
     min_mesh_count: bpy.props.IntProperty(
         name="Min Mesh Count",
         description="Minimum mesh object count required by Custom validation",
@@ -662,6 +675,7 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
         path_col.prop(self, "enable_suffix_index")
         box.prop(self, "report_path_resolution_stats")
         box.prop(self, "import_backface_culling")
+        box.prop(self, "import_skeletal_mesh_as_static_fallback")
         box.prop(self, "enable_import_validation")
         box.prop(self, "min_mesh_count")
         box.prop(self, "min_light_count")
@@ -778,6 +792,9 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
             "import_storage_mode": storage_mode,
             "load_pbr_maps": getattr(prefs, "default_load_pbr_maps", True),
             "import_backface_culling": getattr(prefs, "default_import_backface_culling", False),
+            "import_skeletal_mesh_as_static_fallback": getattr(
+                prefs, "default_import_skeletal_mesh_as_static_fallback", True
+            ),
             "texture_format": getattr(prefs, "default_texture_format", ".png"),
             "path_inference_mode": getattr(prefs, "path_inference_mode", umodel_path_resolver.BASIC_DEFAULT),
             "enable_umodel_path_inference": getattr(prefs, "enable_umodel_path_inference", True),

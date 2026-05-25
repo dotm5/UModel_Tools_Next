@@ -1,8 +1,6 @@
 import typing as t
-import io
 import os
 import shutil
-import contextlib
 import dataclasses
 
 import bpy
@@ -19,7 +17,8 @@ from . import material_shader_hints
 from . import import_cache
 from . import library_linker
 from . import texture_path_utils
-from . import psk_importer
+from .mesh_backends import base as mesh_backend_base
+from .mesh_backends import registry as mesh_backend_registry
 
 
 LINKED_ASSET_LIBRARY = "LINKED_ASSET_LIBRARY"
@@ -48,6 +47,12 @@ class ImportRuntimeStats:
     local_object_count: int = 0
     linked_material_count: int = 0
     local_material_count: int = 0
+    unsupported_skeletal_mesh_count: int = 0
+    skipped_skeletal_mesh_count: int = 0
+    static_fallback_skeletal_mesh_count: int = 0
+    skipped_morph_target_count: int = 0
+    skipped_animation_count: int = 0
+    skipped_armature_count: int = 0
 
     def summary(self) -> str:
         return (
@@ -60,7 +65,13 @@ class ImportRuntimeStats:
             f"missing_material_count={self.missing_material_count}, "
             f"missing_texture_count={self.missing_texture_count}, "
             f"skipped_instances={self.skipped_instances}, "
-            f"imported_instance_count={self.imported_instance_count}"
+            f"imported_instance_count={self.imported_instance_count}, "
+            f"unsupported_skeletal_mesh_count={self.unsupported_skeletal_mesh_count}, "
+            f"skipped_skeletal_mesh_count={self.skipped_skeletal_mesh_count}, "
+            f"static_fallback_skeletal_mesh_count={self.static_fallback_skeletal_mesh_count}, "
+            f"skipped_morph_target_count={self.skipped_morph_target_count}, "
+            f"skipped_animation_count={self.skipped_animation_count}, "
+            f"skipped_armature_count={self.skipped_armature_count}"
         )
 
 
@@ -319,7 +330,7 @@ class AssetImporter:
 
     def _record_missing_asset(
         self,
-        resource_type: t.Literal["mesh", "material", "texture", "unknown"],
+        resource_type: str,
         json_asset_path: str,
         message: str,
         fallback_used: str,
@@ -327,6 +338,7 @@ class AssetImporter:
         material_name: str = "",
         texture_parameter_name: str = "",
         component_name: str = "",
+        resolution_status: str = "",
     ) -> None:
         self._has_warnings = True
         reporter = self._missing_asset_reporter
@@ -350,9 +362,9 @@ class AssetImporter:
         )
         expected_path = resolution.expected_path if resolution is not None else ""
         resolved_candidate_count = resolution.resolved_candidate_count if resolution is not None else 0
-        resolution_status = resolution.status if resolution is not None else "missing_file"
-        if resolution_status == "unresolved":
-            resolution_status = "unresolved"
+        record_resolution_status = resolution_status or (resolution.status if resolution is not None else "missing_file")
+        if record_resolution_status == "unresolved":
+            record_resolution_status = "unresolved"
 
         reporter.add(missing_asset_report.MissingAssetRecord(
             resource_type=resource_type,
@@ -361,7 +373,7 @@ class AssetImporter:
             json_asset_path=json_asset_path,
             normalized_asset_path=normalized_asset_path,
             attempted_extensions=attempted_extensions,
-            resolution_status=resolution_status,
+            resolution_status=record_resolution_status,
             expected_path=expected_path,
             resolved_candidate_count=resolved_candidate_count,
             actor_name=str(context.get("actor_name", "")),
@@ -541,7 +553,7 @@ class AssetImporter:
         mesh_resolved = self._resolve_umodel_path(
             umodel_export_dir=umodel_export_dir,
             asset_path=asset_path_local_noext,
-            extensions=('.pskx', '.psk'),
+            extensions=mesh_backend_registry.get_supported_mesh_extensions(),
         )
         if mesh_resolved.found and mesh_resolved.path is not None:
             source_paths.append(mesh_resolved.path)
@@ -892,13 +904,13 @@ class AssetImporter:
         :param context: Current Blender context.
         :param asset_library_dir: Directory to store the asset, and its dependencies in.
         :param asset_path: Path to the asset in game format.
-        :param umodel_export_dir: UModel output directory to source .psk files from.
+        :param umodel_export_dir: UModel output directory to source mesh files from.
         :param game_profile: Game profile to import.
         :param db: Asset database to operate on. If given, no saving is performed, else the function handles
         everything by itself.
         :raises OSError: Raised when an asset was not found in the UModel output dir or failed opening.
         :raises FileNotFounderror: Raised when an asset was not found in the directory.
-        :raises RuntimeError: Raised when an asset failed importing due to unknown .psk/.pskx importer issue.
+        :raises RuntimeError: Raised when an asset failed importing due to unknown mesh importer issue.
         :raises NotImplementedError: Raised when requested game profile is not implemented or available.
         """
 
@@ -913,52 +925,72 @@ class AssetImporter:
 
         os.makedirs(asset_absolute_dir, exist_ok=True)
 
-        asset_psk_path_noext = os.path.join(umodel_export_dir, asset_path_local_noext)
-        psk_resolved = self._resolve_umodel_path(
+        asset_mesh_path_noext = os.path.join(umodel_export_dir, asset_path_local_noext)
+        mesh_resolved = self._resolve_umodel_path(
             umodel_export_dir=umodel_export_dir,
             asset_path=asset_path_local_noext,
-            extensions=('.pskx', '.psk'),
+            extensions=mesh_backend_registry.get_supported_mesh_extensions(),
         )
 
         found_path: str | None = None
-        animated = False
 
-        if psk_resolved.found and psk_resolved.path is not None:
-            if psk_resolved.path.endswith('.pskx'):
-                found_path = psk_resolved.path
-            elif psk_resolved.path.endswith('.psk'):
-                found_path = psk_resolved.path
-                animated = True
+        if mesh_resolved.found and mesh_resolved.path is not None:
+            found_path = mesh_resolved.path
 
         if found_path is None:
-            lod0_base_path = asset_psk_path_noext + '_LOD0'
+            lod0_base_path = asset_mesh_path_noext + '_LOD0'
             lod0_resolved = self._resolve_umodel_path(
                 umodel_export_dir=umodel_export_dir,
                 asset_path=lod0_base_path,
-                extensions=('.pskx', '.psk'),
+                extensions=mesh_backend_registry.get_supported_mesh_extensions(),
             )
             if lod0_resolved.found and lod0_resolved.path is not None:
                 found_path = lod0_resolved.path
-                animated = found_path.endswith('.psk')
                 utils.verbose_print(f"Info: Exact file not found, using LOD0 fallback: \"{found_path}\"")
 
         if found_path is None:
-            self._last_missing_resolution = psk_resolved
-            raise FileNotFoundError(f"Error: Failed importing asset: {asset_psk_path_noext} was not found "
-                                    "(.psk/.pskx, also tried _LOD0 suffix).")
+            self._last_missing_resolution = mesh_resolved
+            extensions = "/".join(mesh_backend_registry.get_supported_mesh_extensions())
+            raise FileNotFoundError(f"Error: Failed importing asset: {asset_mesh_path_noext} was not found "
+                                    f"({extensions}, also tried _LOD0 suffix).")
 
         utils.verbose_print(f"Importing \"{found_path}\"")
 
-        with contextlib.redirect_stdout(io.StringIO()):
-            if not psk_importer.import_psk(filepath=found_path,
-                                           context=context,
-                                           bImportbone=False):
-                raise RuntimeError(f"Error: Failed importing asset {found_path} due to unknown reason.")
+        mesh_context = mesh_backend_base.MeshImportContext(
+            blender_context=context,
+            asset_path=asset_path,
+            asset_name=os.path.basename(asset_path_local_noext),
+            source_filepath=found_path,
+            asset_library_dir=asset_library_dir,
+            umodel_export_dir=umodel_export_dir,
+            import_storage_mode=getattr(self, "import_storage_mode", LINKED_ASSET_LIBRARY),
+            game_profile=game_profile,
+            import_report=self._last_import_report,
+            options={
+                # TODO: wire this to import UI if more mesh backends become user-facing.
+                "preferred_backend": getattr(self, "mesh_import_backend", "AUTO"),
+                "prefer_pskx": True,
+            },
+        )
+        backend = mesh_backend_registry.get_mesh_backend_for_file(
+            found_path,
+            mesh_context,
+            preferred_backend=mesh_context.options["preferred_backend"],
+        )
+        if backend is None:
+            raise RuntimeError(f"Error: No mesh import backend supports asset {found_path}.")
 
-        obj = context.object
-        asset_psk_path_noext = os.path.splitext(found_path)[0]
-        if asset_psk_path_noext.endswith('_LOD0'):
-            asset_psk_path_noext = asset_psk_path_noext[:-5]
+        result = backend.import_mesh(found_path, mesh_context)
+        for warning in result.warnings:
+            self._warn_print(f"Warning: {warning}")
+        if result.status != mesh_backend_base.IMPORTED or result.main_object is None:
+            raise RuntimeError(f"Error: Failed importing asset {found_path} with backend {backend.id}.")
+
+        obj = result.main_object
+        animated = bool(result.metadata.get("animated_material_layout"))
+        asset_mesh_path_noext = os.path.splitext(found_path)[0]
+        if asset_mesh_path_noext.endswith('_LOD0'):
+            asset_mesh_path_noext = asset_mesh_path_noext[:-5]
 
         # mark object as asset
         obj.asset_mark()
@@ -982,7 +1014,7 @@ class AssetImporter:
                                                                         mode='MESH')
         except OSError as exc:
             self._import_stats.missing_material_count += 1
-            msg = (f"Warning: Loading material descriptor {asset_psk_path_noext + '.props.txt'} failed. "
+            msg = (f"Warning: Loading material descriptor {asset_mesh_path_noext + '.props.txt'} failed. "
                    "Materials will not be avaialble for the imported object.")
             self._record_missing_asset(
                 resource_type="material",

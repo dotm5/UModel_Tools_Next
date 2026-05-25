@@ -178,6 +178,7 @@ cython_debug/
 /test_runtime_blender_icebase/
 /test_runtime_blender_cache_probe/
 /test_runtime_blender_wlbl/
+/test_runtime_uemodel_backend/
 /toTest/
 /package_work/
 

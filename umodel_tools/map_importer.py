@@ -22,6 +22,23 @@ from .map_transform import InstanceTransform, get_parent_transform_matrix, parse
 from .map_instances import StaticMesh
 
 
+_SKELETAL_ENTITY_TYPES = {"SkeletalMeshComponent", "SkeletalMeshActor"}
+_ARMATURE_ENTITY_TYPES = {"Skeleton", "Armature"}
+
+
+def _classify_non_map_asset(entity_type: str) -> str:
+    lowered = entity_type.lower()
+    if entity_type in _SKELETAL_ENTITY_TYPES or "skeletalmesh" in lowered or "skeletal_mesh" in lowered:
+        return "skeletal_mesh"
+    if "morph" in lowered:
+        return "morph_target"
+    if "anim" in lowered or "psa" in lowered:
+        return "animation"
+    if entity_type in _ARMATURE_ENTITY_TYPES or "armature" in lowered or "skeleton" in lowered:
+        return "armature"
+    return ""
+
+
 def create_light_data(name: t.Any, ue_light_type: str) -> bpy.types.Light | None:
     """Create a Blender light data-block from a supported UE light component type."""
     blender_light_type = GameLight.light_type_mapping.get(ue_light_type)
@@ -573,6 +590,23 @@ class MapImporter(asset_importer.AssetImporter):
                                 continue
 
                             light.import_light(import_collection)
+
+                        else:
+                            resource_type = _classify_non_map_asset(entity_type)
+                            if resource_type == "skeletal_mesh":
+                                self._import_skeletal_mesh_static_fallback(
+                                    context=context,
+                                    json_object=json_object,
+                                    entity=entity,
+                                    entity_type=entity_type,
+                                    import_collection=import_collection,
+                                    asset_dir=asset_dir,
+                                    umodel_export_dir=umodel_export_dir,
+                                    db=db,
+                                    game_profile=game_profile,
+                                )
+                            elif resource_type:
+                                self._record_non_map_asset_skip(entity, entity_type)
                 finally:
                     if progress_owner is not None:
                         progress_owner.progress_end()
@@ -601,6 +635,199 @@ class MapImporter(asset_importer.AssetImporter):
             report = self._missing_asset_reporter.finish()
         self._last_import_report = report
         return report
+
+    def _record_non_map_asset_skip(self, entity: t.Any, entity_type: str) -> None:
+        resource_type = _classify_non_map_asset(entity_type)
+        if not resource_type:
+            return
+
+        props = entity.get("Properties", {}) or {}
+        if resource_type == "skeletal_mesh" and "SkeletalMesh" not in props:
+            return
+
+        asset_info = (
+            props.get("SkeletalMesh")
+            or props.get("MorphTarget")
+            or props.get("AnimSequence")
+            or props.get("Animation")
+            or props.get("Skeleton")
+            or {}
+        )
+        json_asset_path = asset_info.get("ObjectPath") or entity.get("ObjectPath") or entity.get("Name", entity_type)
+        actor_name = entity.get("Name", entity.get("Outer", ""))
+        component_path = entity.get("ObjectPath", "")
+        self._set_missing_asset_context(
+            actor_name=actor_name,
+            actor_object_path=component_path,
+            component_name=entity_type,
+            component_object_path=component_path,
+            instance_index="",
+        )
+
+        if resource_type == "skeletal_mesh":
+            self._import_stats.unsupported_skeletal_mesh_count += 1
+            self._import_stats.skipped_skeletal_mesh_count += 1
+        elif resource_type == "morph_target":
+            self._import_stats.skipped_morph_target_count += 1
+        elif resource_type == "animation":
+            self._import_stats.skipped_animation_count += 1
+        elif resource_type == "armature":
+            self._import_stats.skipped_armature_count += 1
+
+        self._record_missing_asset(
+            resource_type=resource_type,
+            json_asset_path=json_asset_path,
+            message=(
+                f"Skipping unsupported non-map asset type {entity_type}. "
+                "Default map import does not import skeletal, morph, armature, or animation data."
+            ),
+            fallback_used="skipped",
+            component_name=entity_type,
+            resolution_status="unsupported",
+        )
+
+    def _import_skeletal_mesh_static_fallback(
+        self,
+        context: bpy.types.Context,
+        json_object: t.Any,
+        entity: t.Any,
+        entity_type: str,
+        import_collection: bpy.types.Collection,
+        asset_dir: str,
+        umodel_export_dir: str,
+        db: asset_db.AssetDB,
+        game_profile: str,
+    ) -> None:
+        props = entity.get("Properties", {}) or {}
+        skeletal_mesh_ref = props.get("SkeletalMesh")
+        if skeletal_mesh_ref is None:
+            self._record_non_map_asset_skip(entity, entity_type)
+            return
+
+        if self._skeletal_component_has_animation(props):
+            self._record_embedded_non_static_data_skip(
+                entity=entity,
+                entity_type=entity_type,
+                resource_type="animation",
+                fallback_used="skipped",
+                message="Skipping animation data while importing SkeletalMeshComponent as static fallback.",
+            )
+
+        if not getattr(self, "import_skeletal_mesh_as_static_fallback", True):
+            self._record_non_map_asset_skip(entity, entity_type)
+            return
+
+        static_entity = dict(entity)
+        static_props = dict(props)
+        static_props["StaticMesh"] = skeletal_mesh_ref
+        static_entity["Properties"] = static_props
+
+        skeletal_mesh = StaticMesh(json_object, static_entity, "StaticMeshComponent")
+        self._set_missing_asset_context(
+            actor_name=entity.get("Name", entity.get("Outer", "")),
+            actor_object_path=entity.get("ObjectPath", ""),
+            component_name=entity_type,
+            component_object_path=skeletal_mesh.raw_object_path,
+            instance_index="",
+        )
+
+        if skeletal_mesh.invalid:
+            self._import_stats.unsupported_skeletal_mesh_count += 1
+            self._import_stats.skipped_skeletal_mesh_count += 1
+            self._record_missing_asset(
+                resource_type="skeletal_mesh",
+                json_asset_path=skeletal_mesh.raw_object_path or entity.get("ObjectPath", entity.get("Name", "")),
+                message="Skipping SkeletalMeshComponent because it cannot be converted to a static fallback.",
+                fallback_used="skipped",
+                component_name=entity_type,
+                resolution_status="unsupported",
+            )
+            return
+
+        try:
+            obj = self._load_asset(
+                context=context,
+                asset_dir=asset_dir,
+                asset_path=skeletal_mesh.asset_path,
+                umodel_export_dir=umodel_export_dir,
+                load=True,
+                db=db,
+                game_profile=game_profile,
+            )
+        except asset_importer.AssetImportPolicyError as exc:
+            self._record_missing_asset(
+                resource_type="skeletal_mesh",
+                json_asset_path=skeletal_mesh.raw_object_path or skeletal_mesh.asset_path,
+                message=f"Skipping SkeletalMeshComponent static fallback after policy error: {exc}",
+                fallback_used="skipped",
+                resolution=self._last_missing_resolution,
+                component_name=entity_type,
+            )
+            self._import_stats.skipped_skeletal_mesh_count += skeletal_mesh.expected_instance_count
+            return
+
+        if obj is None:
+            skipped_count = skeletal_mesh.expected_instance_count
+            self._import_stats.skipped_skeletal_mesh_count += skipped_count
+            self._record_missing_asset(
+                resource_type="skeletal_mesh",
+                json_asset_path=skeletal_mesh.raw_object_path or skeletal_mesh.asset_path,
+                message=(
+                    f"Skipping {skipped_count} SkeletalMeshComponent static fallback instance(s) "
+                    f"because mesh \"{skeletal_mesh.asset_path}\" was not found."
+                ),
+                fallback_used="skipped",
+                resolution=self._last_missing_resolution,
+                component_name=entity_type,
+            )
+            return
+
+        imported_objects = skeletal_mesh.link_object_instance(obj, import_collection)
+        imported_count = len(imported_objects)
+        self._import_stats.imported_instance_count += imported_count
+        self._import_stats.static_fallback_skeletal_mesh_count += imported_count
+
+    def _record_embedded_non_static_data_skip(
+        self,
+        entity: t.Any,
+        entity_type: str,
+        resource_type: str,
+        fallback_used: str,
+        message: str,
+    ) -> None:
+        props = entity.get("Properties", {}) or {}
+        data = props.get("AnimationData", {}) if resource_type == "animation" else {}
+        asset_info = data.get("AnimToPlay", {}) if isinstance(data, dict) else {}
+        json_asset_path = asset_info.get("ObjectPath") or entity.get("ObjectPath") or entity.get("Name", entity_type)
+        self._set_missing_asset_context(
+            actor_name=entity.get("Name", entity.get("Outer", "")),
+            actor_object_path=entity.get("ObjectPath", ""),
+            component_name=entity_type,
+            component_object_path=entity.get("ObjectPath", ""),
+            instance_index="",
+        )
+        if resource_type == "animation":
+            self._import_stats.skipped_animation_count += 1
+        elif resource_type == "morph_target":
+            self._import_stats.skipped_morph_target_count += 1
+        elif resource_type == "armature":
+            self._import_stats.skipped_armature_count += 1
+        self._record_missing_asset(
+            resource_type=resource_type,
+            json_asset_path=json_asset_path,
+            message=message,
+            fallback_used=fallback_used,
+            component_name=entity_type,
+            resolution_status="skipped",
+        )
+
+    @staticmethod
+    def _skeletal_component_has_animation(props: dict[str, t.Any]) -> bool:
+        animation_data = props.get("AnimationData")
+        if isinstance(animation_data, dict) and animation_data:
+            return True
+        animation_mode = props.get("AnimationMode")
+        return bool(animation_mode and animation_mode != "EAnimationMode::AnimationBlueprint")
 
     def _update_storage_counts(self, collection: bpy.types.Collection) -> None:
         mesh_objects = [obj for obj in collection.objects if obj.type == "MESH"]

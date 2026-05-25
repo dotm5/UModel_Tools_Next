@@ -58,6 +58,12 @@ class ImportReport:
     missing_mesh_count: int = 0
     missing_material_count: int = 0
     missing_texture_count: int = 0
+    unsupported_skeletal_mesh_count: int = 0
+    skipped_skeletal_mesh_count: int = 0
+    static_fallback_skeletal_mesh_count: int = 0
+    skipped_morph_target_count: int = 0
+    skipped_animation_count: int = 0
+    skipped_armature_count: int = 0
     ambiguous_asset_count: int = 0
     skipped_instance_count: int = 0
     placeholder_material_count: int = 0
@@ -160,6 +166,22 @@ class MissingAssetReporter:
                 report.missing_material_count += 1
             elif record.resource_type == "texture":
                 report.missing_texture_count += 1
+            elif record.resource_type == "skeletal_mesh":
+                if record.resolution_status == "unsupported":
+                    report.unsupported_skeletal_mesh_count += record.occurrence_count
+                if record.fallback_used == "skipped":
+                    report.skipped_skeletal_mesh_count += record.occurrence_count
+                elif record.fallback_used == "static_fallback":
+                    report.static_fallback_skeletal_mesh_count += record.occurrence_count
+            elif record.resource_type == "morph_target":
+                if record.fallback_used == "skipped":
+                    report.skipped_morph_target_count += record.occurrence_count
+            elif record.resource_type == "animation":
+                if record.fallback_used == "skipped":
+                    report.skipped_animation_count += record.occurrence_count
+            elif record.resource_type == "armature":
+                if record.fallback_used == "skipped":
+                    report.skipped_armature_count += record.occurrence_count
 
             if record.resolution_status == "ambiguous":
                 report.ambiguous_asset_count += 1
@@ -232,6 +254,17 @@ class MissingAssetReporter:
         print(f"[UModelTools] Skipped instances: {report.skipped_instance_count}")
         print(f"[UModelTools] Placeholder materials: {report.placeholder_material_count}")
         print(f"[UModelTools] Placeholder textures/colors: {report.placeholder_texture_count}")
+        if (
+            report.unsupported_skeletal_mesh_count
+            or report.skipped_morph_target_count
+            or report.skipped_animation_count
+            or report.skipped_armature_count
+        ):
+            print("[UModelTools] Unsupported non-map assets skipped:")
+            print(f"  skeletal_mesh={report.unsupported_skeletal_mesh_count}")
+            print(f"  morph_targets={report.skipped_morph_target_count}")
+            print(f"  animations={report.skipped_animation_count}")
+            print(f"  armatures={report.skipped_armature_count}")
         if self._write_fallback_message:
             print(self._write_fallback_message)
         if report.csv_report_path:
