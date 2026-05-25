@@ -294,6 +294,15 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         default=False
     )
 
+    default_import_skeletal_mesh_as_static_fallback: bpy.props.BoolProperty(
+        name="Import Skeletal Meshes as Static Fallback",
+        description=(
+            "Default whether map imports should place SkeletalMeshComponent geometry as static meshes "
+            "without importing armatures, morph targets, or animations"
+        ),
+        default=True
+    )
+
     default_texture_format: bpy.props.EnumProperty(
         name="Default Texture Format",
         description="Default texture file extension expected in the UModel export directory",
@@ -553,6 +562,7 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         layout.prop(self, "default_load_pbr_maps")
         layout.prop(self, "default_texture_format")
         layout.prop(self, "default_import_backface_culling")
+        layout.prop(self, "default_import_skeletal_mesh_as_static_fallback")
         layout.prop(self, "manual_asset_cache_dir")
         layout.prop(self, "save_missing_asset_report")
         layout.prop(self, "max_missing_assets_printed_to_console")
