@@ -18,6 +18,10 @@ import typing as t
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 UMODEL_TOOLS_ROOT = os.path.join(ADDON_ROOT, "umodel_tools")
 
+# Ensure umodel_tools is importable as a package for materials.audit imports.
+if ADDON_ROOT not in sys.path:
+    sys.path.insert(0, ADDON_ROOT)
+
 
 def _load_module(name: str, path: str) -> t.Any:
     spec = importlib.util.spec_from_file_location(name, path)
@@ -36,6 +40,25 @@ props_txt_parser = _load_module("audit_props_txt_parser", os.path.join(UMODEL_TO
 umodel_path_resolver = _load_module(
     "audit_umodel_path_resolver",
     os.path.join(UMODEL_TOOLS_ROOT, "umodel_path_resolver.py"),
+)
+
+# Pure helpers moved to the materials sub-package.
+from umodel_tools.materials.audit import (  # noqa: E402
+    actor_name,
+    asset_name_from_props_path,
+    asset_ref_to_props_path,
+    base_row,
+    effective_rule_connections,
+    looks_like_intentional_constant_material,
+    principled_summary,
+    rule_disabled_by_static_switch,
+    rule_feeds_alpha,
+    rule_feeds_ao,
+    shader_plan_from_blend,
+    skip_rule_connection,
+    split_object_path,
+    static_switch_is_disabled,
+    uses_packed_diffuse_alpha_emission,
 )
 
 
@@ -368,80 +391,35 @@ def _material_refs_from_mesh_props(export_dir: str,
     return material_paths
 
 
-def _asset_ref_to_props_path(value: str) -> str:
-    path = _split_object_path(value)
-    path = path.replace("\\", "/")
-    while path.startswith("/"):
-        path = path[1:]
-    return os.path.normpath(path + ".props.txt")
+# Aliases so existing local call sites don't need renaming.
+_split_object_path = split_object_path
+_asset_ref_to_props_path = asset_ref_to_props_path
+_asset_name_from_props_path = asset_name_from_props_path
+_actor_name = actor_name
+_rule_feeds_ao = rule_feeds_ao
+_rule_feeds_alpha = rule_feeds_alpha
+_effective_rule_connections = effective_rule_connections
+_skip_rule_connection = skip_rule_connection
+_rule_disabled_by_static_switch = rule_disabled_by_static_switch
+_static_switch_is_disabled = static_switch_is_disabled
+_shader_plan_from_blend = shader_plan_from_blend
+_principled_summary = principled_summary
+_looks_like_intentional_constant_material = looks_like_intentional_constant_material
+_uses_packed_diffuse_alpha_emission = uses_packed_diffuse_alpha_emission
+_base_row = base_row
 
 
-def _asset_name_from_props_path(value: str) -> str:
-    basename = os.path.basename(value)
-    if basename.lower().endswith(".props.txt"):
-        return basename[:-len(".props.txt")]
-    return os.path.splitext(basename)[0]
-
-
-def _split_object_path(value: str) -> str:
-    if not value:
-        return ""
-
-    if "'" in value:
-        parts = value.split("'")
-        if len(parts) >= 2:
-            value = parts[1]
-
-    if ":" in value:
-        value = value.split(":", 1)[1]
-
-    match = re.match(r"^(.*)\.\d+$", value)
-    if match:
-        return match.group(1)
-
-    if "." in value:
-        before, after = value.rsplit(".", 1)
-        if after and "/" not in after and "\\" not in after:
-            return before
-
-    return value
-
-
-def _actor_name(entity: dict[str, t.Any]) -> str:
-    outer = entity.get("Outer")
-    if isinstance(outer, dict):
-        object_name = outer.get("ObjectName", "")
-        if "'" in object_name:
-            inner = object_name.split("'")[1]
-            return inner.rsplit(".", 1)[-1]
-    return str(entity.get("Name", ""))
-
-
-def _rule_feeds_ao(rule: material_rules.TextureRule) -> bool:
-    return any(connection.target == "ao_mix.Color2" for connection in rule.connections)
-
-
-def _rule_feeds_alpha(rule: material_rules.TextureRule, blend_mode: str | None) -> bool:
-    alpha_targets = {"bsdf.Alpha", "mix_shader.Fac", "mix_shader.Factor"}
-    return any(
-        connection.target in alpha_targets
-        for connection in _effective_rule_connections(rule, blend_mode)
-    )
-
-
-def _looks_like_intentional_constant_material(material_name: str, parent_reference: str | None) -> bool:
-    haystack = " ".join(value for value in (material_name, parent_reference or "") if value).lower()
-    return "nothing" in haystack
-
-
-def _shader_plan_from_blend(blend_mode: str | None) -> str:
-    match blend_mode:
-        case "BLEND_Additive (3)":
-            return "additive"
-        case "BLEND_Modulate (4)":
-            return "modulate"
-        case _:
-            return "principled"
+def _shader_hint_summary(shader_hint: material_shader_hints.MaterialShaderHint) -> str:
+    if shader_hint.shader == "glass" and shader_hint.alpha < 1.0:
+        return (
+            "glass.BSDF->mix_shader.Shader;"
+            "transparent.BSDF->mix_shader.Shader_001;"
+            f"mix_shader.Fac={1.0 - shader_hint.alpha:.6g};"
+            "mix_shader.Shader->output.Surface"
+        )
+    if shader_hint.shader == "glass":
+        return "glass.BSDF->output.Surface"
+    return f"{shader_hint.shader}->output.Surface"
 
 
 def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
@@ -469,80 +447,6 @@ def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
 
     parts.append(_principled_summary(has_ao=has_ao))
     return ";".join(parts)
-
-
-def _effective_rule_connections(rule: material_rules.TextureRule,
-                                blend_mode: str | None) -> list[material_rules.ConnectionSpec]:
-    return [
-        connection for connection in rule.connections
-        if not _skip_rule_connection(rule, connection, blend_mode)
-    ]
-
-
-def _skip_rule_connection(rule: material_rules.TextureRule,
-                          connection: material_rules.ConnectionSpec,
-                          blend_mode: str | None) -> bool:
-    return (
-        rule.diffuse
-        and blend_mode == "BLEND_Opaque (0)"
-        and connection.source == "image.Alpha"
-        and connection.target == "bsdf.Alpha"
-    )
-
-
-def _rule_disabled_by_static_switch(rule: material_rules.TextureRule,
-                                    static_switches: dict[str, bool]) -> bool:
-    if rule.name == "normal" and _static_switch_is_disabled(static_switches, "usenormal", "use normal"):
-        return True
-
-    if (
-        rule.name in {"orm", "rmo", "mroh", "mro", "rm", "sro"}
-        and _static_switch_is_disabled(static_switches, "useorm", "use orm")
-    ):
-        return True
-
-    return False
-
-
-def _static_switch_is_disabled(static_switches: dict[str, bool], *names: str) -> bool:
-    for name in names:
-        if static_switches.get(name.lower()) is False:
-            return True
-    return False
-
-
-def _uses_packed_diffuse_alpha_emission(blend_mode: str | None,
-                                        scalars: dict[str, float],
-                                        vectors: dict[str, props_txt_parser.Color]) -> bool:
-    return (
-        blend_mode == "BLEND_Opaque (0)"
-        and ("e_level" in scalars or "e_color" in vectors)
-    )
-
-
-def _principled_summary(has_ao: bool) -> str:
-    if has_ao:
-        return "ao_mix.Result->bsdf.Base Color;bsdf.BSDF->output.Surface"
-    return "bsdf.BSDF->output.Surface"
-
-
-def _shader_hint_summary(shader_hint: material_shader_hints.MaterialShaderHint) -> str:
-    if shader_hint.shader == "glass" and shader_hint.alpha < 1.0:
-        return (
-            "glass.BSDF->mix_shader.Shader;"
-            "transparent.BSDF->mix_shader.Shader_001;"
-            f"mix_shader.Fac={1.0 - shader_hint.alpha:.6g};"
-            "mix_shader.Shader->output.Surface"
-        )
-    if shader_hint.shader == "glass":
-        return "glass.BSDF->output.Surface"
-    return f"{shader_hint.shader}->output.Surface"
-
-
-def _base_row(**overrides: str) -> dict[str, str]:
-    row = {field: "" for field in CSV_FIELDS}
-    row.update({key: str(value) for key, value in overrides.items() if key in row})
-    return row
 
 
 def _parse_args() -> argparse.Namespace:
