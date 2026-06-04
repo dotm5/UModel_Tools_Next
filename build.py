@@ -6,6 +6,7 @@ import time
 import shutil
 import argparse
 import contextlib
+import fnmatch
 import typing as t
 
 PYTHON_PATH = sys.executable
@@ -33,24 +34,91 @@ except ImportError:
         sys.exit(1)
 
 
+def _ignore_dev_dirs(directory: str, names: t.Iterable[str]) -> set[str]:
+    """Ignore development-only directories and files during copytree."""
+    _DEV_IGNORE = {
+        ".git", ".github", ".idea", ".vscode", "__pycache__",
+        "dist", "docs", "history", "reference", "scripts",
+        "tests", "tests_blender", "tools",
+        ".gitignore", "envi.png", "Envi_Wlbl.json",
+        "package_work",
+    }
+    ignored: set[str] = set()
+    for name in names:
+        if name in _DEV_IGNORE:
+            ignored.add(name)
+        elif name.lower().endswith(".zip"):
+            ignored.add(name)
+        elif fnmatch.fnmatchcase(name, "material_mapping_audit*.csv"):
+            ignored.add(name)
+    return ignored
+
+
 @contextlib.contextmanager
 def create_distribution(dist_path: t.Optional[str]):
     if dist_path:
         cwd = os.getcwd()
         try:
             print_info(f'\nCreating addon distribution in \"{dist_path}\" ...')
-            os.makedirs(dist_path, exist_ok=True)
-            shutil.copytree(os.path.dirname(os.path.abspath(__file__)), dist_path, dirs_exist_ok=True)
+            _abs_dist = os.path.abspath(dist_path)
+            shutil.rmtree(_abs_dist, ignore_errors=True)  # Start fresh every time.
+            os.makedirs(_abs_dist, exist_ok=True)
+            shutil.copytree(
+                os.path.dirname(os.path.abspath(__file__)), _abs_dist,
+                dirs_exist_ok=True,
+                ignore=_ignore_dev_dirs,
+            )
             print(os.path.dirname(os.path.abspath(__file__)), dist_path)
-            os.chdir(dist_path)
+            os.chdir(_abs_dist)
+
+            # Remove development-only directories that must not ship in the addon zip.
+            _DEV_EXCLUDE_DIRS = (
+                ".git",
+                ".github",
+                ".idea",
+                ".vscode",
+                "dist",
+                "docs",
+                "history",
+                "reference",
+                "scripts",
+                "tests",
+                "tests_blender",
+                "tools",
+            )
+            _DEV_EXCLUDE_FILES = (
+                ".gitignore",
+                "envi.png",
+                "Envi_Wlbl.json",
+            )
+            _DEV_EXCLUDE_GLOBS = (
+                "*.zip",
+                "material_mapping_audit*.csv",
+            )
+
+            for root, dirs, files in os.walk(_abs_dist, topdown=True):
+                dirs_to_remove = [d for d in dirs if d in _DEV_EXCLUDE_DIRS]
+                for subdir in dirs_to_remove:
+                    shutil.rmtree(os.path.join(root, subdir), ignore_errors=True)
+                    dirs.remove(subdir)
+
+                if root == _abs_dist:
+                    for filename in files:
+                        if filename in _DEV_EXCLUDE_FILES:
+                            os.remove(os.path.join(root, filename))
+                        else:
+                            for pattern in _DEV_EXCLUDE_GLOBS:
+                                if fnmatch.fnmatchcase(filename, pattern):
+                                    try:
+                                        os.remove(os.path.join(root, filename))
+                                    except OSError:
+                                        pass
+
+                for subdir in dirs:
+                    if subdir == "__pycache__" or subdir.startswith(".") or subdir == "package_work":
+                        shutil.rmtree(os.path.join(root, subdir), ignore_errors=True)
 
             yield None
-
-            # remove junk
-            for root, dirs, _ in os.walk(dist_path):
-                for subdir in dirs:
-                    if subdir.startswith('.') or subdir == '__pycache__':
-                        shutil.rmtree(os.path.join(root, subdir), ignore_errors=True)
 
         finally:
             os.chdir(cwd)

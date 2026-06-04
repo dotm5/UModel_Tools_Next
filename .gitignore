@@ -159,11 +159,12 @@ cython_debug/
 /docs/build/*
 
 # Local export/test artifacts
-/asset_cache/
-/asset_cache_import_test/
-/umodel_export_truncated_test/
-/fmodel/
-/umodel_win32/
+/tests/runtime/
+/tests/fixtures/umodel_export_truncated_test/
+/tests/fixtures/map_import_samples/
+/tests/fixtures/sample_export/
+/tools/fmodel/
+/tools/umodel_win32/
 /*.zip
 /envi.png
 /Envi_Wlbl.json
@@ -171,15 +172,6 @@ cython_debug/
 /reference/diagnostics/
 /umodel_tools/last_import_params.json
 /material_mapping_audit*.csv
-/test_runtime_local_single/
-/test_runtime_missing_report/
-/test_runtime_material_nodes/
-/test_runtime_no_profile_param_cache/
-/test_runtime_blender_icebase/
-/test_runtime_blender_cache_probe/
-/test_runtime_blender_wlbl/
-/test_runtime_uemodel_backend/
-/toTest/
 /package_work/
 
 # Local probe/export helpers
@@ -190,3 +182,7 @@ cython_debug/
 /scripts/probes/probe_blender_i18n.py
 /scripts/probes/probe_localization.py
 /scripts/probes/diagnose_real_import.py
+
+# Dev-only directories (never ship in the addon zip)
+/history/
+/reference/my real project/
