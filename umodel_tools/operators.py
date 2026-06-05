@@ -127,6 +127,47 @@ def _resolve_asset_cache_dir(
     return _default_asset_cache_dir(umodel_export_dir)
 
 
+def _preferred_ueformat_export_dir(prefs: bpy.types.AddonPreferences) -> str:
+    profile = prefs.get_active_profile()
+    if profile is not None and profile.umodel_export_dir:
+        return profile.umodel_export_dir
+    return getattr(prefs, "recent_umodel_export_dir", "")
+
+
+def _normalize_ueformat_asset_path(asset_path: str) -> str:
+    normalized = os.path.normpath(asset_path.replace("\\", os.sep).replace("/", os.sep)) if asset_path else ""
+    return normalized[1:] if normalized.startswith(os.sep) else normalized
+
+
+def _ueformat_asset_path_from_source(source_path: str, export_dir: str) -> str:
+    if source_path and export_dir:
+        try:
+            relpath = os.path.relpath(os.path.abspath(source_path), os.path.abspath(export_dir))
+            if not relpath.startswith(".."):
+                return os.path.normpath(relpath)
+        except ValueError:
+            pass
+    return os.path.basename(source_path) if source_path else ""
+
+
+def _ueformat_export_root_from_source_and_asset_path(source_path: str, asset_path: str) -> str:
+    source_abs = os.path.abspath(source_path)
+    normalized_asset_path = _normalize_ueformat_asset_path(asset_path)
+    if not source_abs or not normalized_asset_path:
+        return ""
+
+    source_parts = source_abs.replace("\\", "/").split("/")
+    asset_parts = normalized_asset_path.replace("\\", "/").split("/")
+    if len(asset_parts) > len(source_parts):
+        return ""
+    if [part.lower() for part in source_parts[-len(asset_parts):]] != [part.lower() for part in asset_parts]:
+        return ""
+    root_parts = source_parts[:-len(asset_parts)]
+    if not root_parts:
+        return ""
+    return os.path.normpath("/".join(root_parts))
+
+
 class UMODELTOOLS_OT_recover_unreal_asset(asset_importer.AssetImporter, bpy.types.Operator):
     bl_idname = "umodel_tools.recover_unreal_asset"
     bl_label = "Recover Unreal Asset"
@@ -381,10 +422,10 @@ class UMODELTOOLS_OT_select_unreal_map_json(bpy.types.Operator, bpy_extras.io_ut
         return [filepath] if filepath else []
 
 
-class UMODELTOOLS_OT_import_ueformat_model(asset_importer.AssetImporter, bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
-    bl_idname = "umodel_tools.import_ueformat_model"
+class UMODELTOOLS_OT_select_ueformat_model(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
+    bl_idname = "umodel_tools.select_ueformat_model"
     bl_label = "Import UEFormat Asset"
-    bl_description = "Import a UEFormat .uemodel with FModel JSON material reconstruction"
+    bl_description = "Select a UEFormat .uemodel file before setting import paths"
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".uemodel"
@@ -393,6 +434,44 @@ class UMODELTOOLS_OT_import_ueformat_model(asset_importer.AssetImporter, bpy.typ
         default="*.uemodel",
         options={'HIDDEN'},
         maxlen=255
+    )
+
+    def invoke(self, context: bpy.types.Context, _: bpy.types.Event) -> set[str]:
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, _context: bpy.types.Context) -> set[str]:
+        if not self.filepath:
+            self.report({'ERROR'}, localization.t_report("Asset path was not provided."))
+            return {'CANCELLED'}
+
+        prefs = preferences.get_addon_preferences()
+        export_dir = _preferred_ueformat_export_dir(prefs)
+        asset_path = _ueformat_asset_path_from_source(self.filepath, export_dir)
+        return bpy.ops.umodel_tools.import_ueformat_model(
+            'INVOKE_DEFAULT',
+            filepath=self.filepath,
+            asset_path=asset_path,
+            umodel_export_dir=export_dir,
+        )
+
+
+class UMODELTOOLS_OT_import_ueformat_model(asset_importer.AssetImporter, bpy.types.Operator):
+    bl_idname = "umodel_tools.import_ueformat_model"
+    bl_label = "Import UEFormat Asset"
+    bl_description = "Import a UEFormat .uemodel with FModel JSON material reconstruction"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: bpy.props.StringProperty(
+        name="UEFormat Model File",
+        description="Selected .uemodel source file",
+        subtype='FILE_PATH',
+        options={'HIDDEN'}
+    )
+
+    asset_path: bpy.props.StringProperty(
+        name="Asset Path",
+        description="Game-relative asset path used inside the export root, for example PM/Content/.../Model.uemodel"
     )
 
     umodel_export_dir: bpy.props.StringProperty(
@@ -463,21 +542,27 @@ class UMODELTOOLS_OT_import_ueformat_model(asset_importer.AssetImporter, bpy.typ
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> set[str]:
         prefs = preferences.get_addon_preferences()
-        profile = prefs.get_active_profile()
-        if profile is not None and profile.umodel_export_dir:
-            self.umodel_export_dir = profile.umodel_export_dir
-        elif getattr(prefs, "recent_umodel_export_dir", ""):
-            self.umodel_export_dir = prefs.recent_umodel_export_dir
+        if not self.umodel_export_dir:
+            self.umodel_export_dir = _preferred_ueformat_export_dir(prefs)
+
+        if self.filepath and not self.asset_path:
+            self.asset_path = _ueformat_asset_path_from_source(self.filepath, self.umodel_export_dir)
+
+        if self.filepath and self.asset_path and not self.umodel_export_dir:
+            self.umodel_export_dir = _ueformat_export_root_from_source_and_asset_path(self.filepath, self.asset_path)
 
         self.asset_cache_dir = _resolve_asset_cache_dir(self.umodel_export_dir, prefs=prefs)
         self.game_profile = "generic"
         self.enable_umodel_path_inference = getattr(prefs, "enable_umodel_path_inference", True)
         self.path_inference_mode = getattr(prefs, "path_inference_mode", umodel_path_resolver.BASIC_DEFAULT)
         self.enable_suffix_index = getattr(prefs, "enable_suffix_index", True)
-        return bpy_extras.io_utils.ImportHelper.invoke(self, context, event)
+        return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, _context: bpy.types.Context) -> None:
         layout = self.layout
+        if self.filepath:
+            layout.label(text=os.path.basename(self.filepath))
+        layout.prop(self, "asset_path")
         layout.prop(self, "umodel_export_dir")
         layout.prop(self, "asset_cache_dir")
         layout.prop(self, "game_profile")
@@ -494,17 +579,28 @@ class UMODELTOOLS_OT_import_ueformat_model(asset_importer.AssetImporter, bpy.typ
 
     def execute(self, context: bpy.types.Context) -> set[str]:
         self._reset_import_runtime_state()
+        source_path = os.path.abspath(self.filepath)
+        if not source_path or not os.path.isfile(source_path):
+            return self._op_message('ERROR', "You need to select an existing .uemodel file.")
+
+        asset_path = _normalize_ueformat_asset_path(self.asset_path)
+        if not asset_path:
+            return self._op_message('ERROR', "You need to provide an asset path for the selected .uemodel.")
+        if not os.path.splitext(asset_path)[1]:
+            asset_path += ".uemodel"
+
         umodel_export_dir = _normalize_dir_input(self.umodel_export_dir)
+        if not umodel_export_dir:
+            umodel_export_dir = _ueformat_export_root_from_source_and_asset_path(source_path, asset_path)
         if not umodel_export_dir or not os.path.isdir(umodel_export_dir):
             return self._op_message('ERROR', "You need to specify an existing UModel/FModel export directory.")
 
-        source_path = os.path.abspath(self.filepath)
-        try:
-            asset_path = os.path.relpath(source_path, umodel_export_dir)
-        except ValueError:
-            return self._op_message('ERROR', "The selected .uemodel must be inside the export directory.")
-        if asset_path.startswith(".."):
-            return self._op_message('ERROR', "The selected .uemodel must be inside the export directory.")
+        expected_source_path = os.path.abspath(os.path.join(umodel_export_dir, asset_path))
+        if os.path.normcase(expected_source_path) != os.path.normcase(source_path):
+            return self._op_message(
+                'ERROR',
+                "The selected .uemodel file does not match the provided export directory and asset path."
+            )
 
         asset_dir = _resolve_asset_cache_dir(umodel_export_dir, self.asset_cache_dir)
         os.makedirs(asset_dir, exist_ok=True)
@@ -1411,7 +1507,7 @@ def menu_func_object(menu: bpy.types.Menu, _: bpy.types.Context) -> None:
 
 def menu_func_import(menu: bpy.types.Menu, _: bpy.types.Context) -> None:
     menu.layout.operator(UMODELTOOLS_OT_select_unreal_map_json.bl_idname)
-    menu.layout.operator(UMODELTOOLS_OT_import_ueformat_model.bl_idname)
+    menu.layout.operator(UMODELTOOLS_OT_select_ueformat_model.bl_idname)
 
 
 def bl_register() -> None:

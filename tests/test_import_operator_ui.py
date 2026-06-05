@@ -107,10 +107,17 @@ def main():
         if operators.UMODELTOOLS_OT_import_ueformat_model.bl_label != "Import UEFormat Asset":
             raise AssertionError("UEFormat import operator should be labelled Import UEFormat Asset.")
 
+        ueformat_selector_rna = bpy.ops.umodel_tools.select_ueformat_model.get_rna_type()
+        ueformat_selector_props = set(ueformat_selector_rna.properties.keys())
+        for required_selector_prop in ("filepath", "filter_glob"):
+            if required_selector_prop not in ueformat_selector_props:
+                raise AssertionError(f"UEFormat selector is missing {required_selector_prop!r}")
+
         ueformat_rna = bpy.ops.umodel_tools.import_ueformat_model.get_rna_type()
         ueformat_prop_names = set(ueformat_rna.properties.keys())
         ueformat_required = {
             "filepath",
+            "asset_path",
             "umodel_export_dir",
             "asset_cache_dir",
             "game_profile",
@@ -220,6 +227,16 @@ def main():
 
         ueformat_fake = types.SimpleNamespace(
             layout=FakeLayout(),
+            filepath=os.path.join(
+                ADDON_ROOT,
+                "tests",
+                "fixtures",
+                "sample_export",
+                "PM",
+                "Content",
+                "Model.uemodel",
+            ),
+            asset_path=os.path.join("PM", "Content", "Model.uemodel"),
             umodel_export_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export"),
             asset_cache_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export", "temp-assets"),
             game_profile="generic",
@@ -234,6 +251,7 @@ def main():
         operators.UMODELTOOLS_OT_import_ueformat_model.draw(ueformat_fake, bpy.context)
         ueformat_drawn_props = [call[1] for call in ueformat_fake.layout.calls if call[0] == "prop"]
         for required_draw_prop in (
+            "asset_path",
             "umodel_export_dir",
             "asset_cache_dir",
             "game_profile",

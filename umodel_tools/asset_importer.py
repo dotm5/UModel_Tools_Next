@@ -1485,7 +1485,7 @@ class AssetImporter:
 
             for mat, mat_name in new_materials:
                 if mat_name in obj.data.materials:
-                    obj.data.materials[obj.data.materials.find(mat_name)] = mat
+                    obj.material_slots[obj.data.materials.find(mat_name)].material = mat
                 else:
                     obj.data.materials.append(mat)
 
