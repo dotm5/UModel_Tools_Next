@@ -38,6 +38,23 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 
 The distributed Blender add-on keeps only runtime site packages in `umodel_tools/third_party`.
 Reference importer code that is part of this fork, such as the PSK/PSKX importer integration, lives inline under `umodel_tools` so the vendored dependency folder does not grow into a mixed plugin dump.
+Built-in material rule datasets use TOML only and are parsed with Python's standard-library `tomllib`.
+
+## Material Rule Example
+
+```toml
+name = "ExampleRules"
+
+[[texture_rules]]
+name = "diffuse"
+diffuse = true
+[texture_rules.match]
+param_names = ["base color", "diffuse"]
+suffixes = ["d", "basecolor"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "ao_mix.Color1"
+```
 
 ## Visual Identity
 

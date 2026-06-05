@@ -11,8 +11,8 @@ import bpy
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-UMODEL_EXPORT_DIR = os.path.join(ADDON_ROOT, "umodel_export_truncated_test")
-TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_missing_report")
+UMODEL_EXPORT_DIR = os.path.join(ADDON_ROOT, "tests", "fixtures", "umodel_export_truncated_test")
+TEST_ROOT = os.path.join(ADDON_ROOT, "tests", "runtime", "missing_report")
 VALID_MESH_OBJECT_PATH = (
     "/PM/Content/PaperMan/Environment/Meshes/Foliage/"
     "S_Envi_common_flowerpot_01a.S_Envi_common_flowerpot_01a"
@@ -135,6 +135,9 @@ def main():
         print(f"TEST_MISSING_ASSET_REPORT_STRICT_CSV {strict_csv_path}")
         print("TEST_MISSING_ASSET_REPORT_OK")
     finally:
+        cleanup_report_csvs()
+        if os.path.isdir(TEST_ROOT):
+            shutil.rmtree(TEST_ROOT)
         bpy.ops.preferences.addon_disable(module="umodel_tools")
 
 

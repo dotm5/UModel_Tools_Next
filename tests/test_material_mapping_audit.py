@@ -19,9 +19,9 @@ SCRIPT_PATH = os.path.join(ADDON_ROOT, "scripts", "audit", "audit_material_mappi
 
 def main():
     audit = _load_module("audit_material_mappings_test", SCRIPT_PATH)
-    rule_set = audit.material_rules.load_rule_sets([
-        audit.material_rules.default_rule_path("generic"),
-        audit.material_rules.default_rule_path("calabiyau_game"),
+    rule_set = audit.rule_module.load_rule_sets([
+        audit.rule_module.default_rule_path("generic"),
+        audit.rule_module.default_rule_path("calabiyau_game"),
     ])
     settings = audit.umodel_path_resolver.UModelPathInferenceSettings(
         enable_umodel_path_inference=True,
@@ -133,5 +133,6 @@ def _load_module(name, path):
 
 if __name__ == "__main__":
     if not os.path.exists(MAP_PATH):
-        raise SystemExit(f"Missing test fixture: {MAP_PATH}")
+        print(f"TEST_MATERIAL_MAPPING_AUDIT_SKIPPED missing fixture: {MAP_PATH}")
+        raise SystemExit(0)
     main()

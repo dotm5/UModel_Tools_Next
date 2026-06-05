@@ -5,24 +5,24 @@ import dataclasses
 import os
 
 import bpy
-import lark
 
 from .. import utils
-from .. import material_rules
 from .. import props_txt_parser
+from ..materials import rules as rule_module
 
 
 GAME_NAME = "Generic"
 GAME_DESCRIPTION = "Provides basic support for any Unreal Engine game"
 
 _RULE_SET_CACHE_KEY: tuple[str, ...] | None = None
-_RULE_SET_CACHE: material_rules.MaterialRuleSet | None = None
+_RULE_SET_CACHE: rule_module.MaterialRuleSet | None = None
+_RULE_PATH_OVERRIDE: tuple[str, ...] | None = None
 
 
 @dataclasses.dataclass
 class MaterialContext:
     bsdf_node: t.Optional[bpy.types.ShaderNodeBsdfPrincipled | bpy.types.ShaderNodeBsdfDiffuse]
-    desc_ast: lark.Tree
+    desc_ast: t.Any
     use_pbr: bool
     blend_mode: str | None
     scalar_parameters: dict[str, float]
@@ -34,15 +34,26 @@ class MaterialContext:
 _state_buffer: dict[bpy.types.Material, MaterialContext] = {}
 
 
-def process_material(mat: bpy.types.Material, desc_ast: lark.Tree, use_pbr: bool):  # pylint: disable=unused-argument
+def process_material(mat: bpy.types.Material, desc_ast: t.Any, use_pbr: bool):  # pylint: disable=unused-argument
+    if hasattr(desc_ast, "base_prop_overrides"):
+        blend_mode = getattr(desc_ast, "blend_mode", None)
+        scalar_parameters = getattr(desc_ast, "scalar_parameters", {})
+        vector_parameters = getattr(desc_ast, "vector_parameters", {})
+        static_switch_parameters = getattr(desc_ast, "static_switch_parameters", {})
+    else:
+        blend_mode = _extract_blend_mode(desc_ast)
+        scalar_parameters = props_txt_parser.extract_scalar_parameters(desc_ast)
+        vector_parameters = props_txt_parser.extract_vector_parameters(desc_ast)
+        static_switch_parameters = props_txt_parser.extract_static_switch_parameters(desc_ast)
+
     _state_buffer[mat] = MaterialContext(
         bsdf_node=None,
         desc_ast=desc_ast,
         use_pbr=use_pbr,
-        blend_mode=_extract_blend_mode(desc_ast),
-        scalar_parameters=props_txt_parser.extract_scalar_parameters(desc_ast),
-        vector_parameters=props_txt_parser.extract_vector_parameters(desc_ast),
-        static_switch_parameters=props_txt_parser.extract_static_switch_parameters(desc_ast),
+        blend_mode=blend_mode,
+        scalar_parameters=scalar_parameters,
+        vector_parameters=vector_parameters,
+        static_switch_parameters=static_switch_parameters,
     )
 
 
@@ -136,11 +147,11 @@ def end_process_material(mat: bpy.types.Material):
 
 # Non-interface functions below
 
-def _resolve_rule(tex_type: str, tex_short_name: str) -> material_rules.TextureRule | None:
+def _resolve_rule(tex_type: str, tex_short_name: str) -> rule_module.TextureRule | None:
     return _active_rule_set().resolve(tex_type, tex_short_name)
 
 
-def _active_rule_set() -> material_rules.MaterialRuleSet:
+def _active_rule_set() -> rule_module.MaterialRuleSet:
     global _RULE_SET_CACHE_KEY, _RULE_SET_CACHE  # pylint: disable=global-statement
 
     rule_paths = _active_rule_paths()
@@ -151,20 +162,30 @@ def _active_rule_set() -> material_rules.MaterialRuleSet:
     if _RULE_SET_CACHE is not None and cache_key == _RULE_SET_CACHE_KEY:
         return _RULE_SET_CACHE
 
-    _RULE_SET_CACHE = material_rules.load_rule_sets(rule_paths)
+    _RULE_SET_CACHE = rule_module.load_rule_sets(rule_paths)
     _RULE_SET_CACHE_KEY = cache_key
     return _RULE_SET_CACHE
 
 
 def _active_rule_paths() -> tuple[str, ...]:
+    if _RULE_PATH_OVERRIDE is not None:
+        return _RULE_PATH_OVERRIDE
+
     try:
         prefs = utils.preferences.get_addon_preferences()
         return tuple(prefs.get_active_material_rule_dataset_paths())
     except Exception:  # pragma: no cover - Blender preferences may be unavailable in isolated probes.
-        return (material_rules.default_rule_path("generic"),)
+        return (rule_module.default_rule_path("generic"),)
 
 
-def _create_rule_nodes(mat: bpy.types.Material, rule: material_rules.TextureRule) -> dict[str, bpy.types.Node]:
+def set_material_rule_path_override(rule_paths: t.Sequence[str] | None) -> None:
+    global _RULE_PATH_OVERRIDE, _RULE_SET_CACHE_KEY, _RULE_SET_CACHE  # pylint: disable=global-statement
+    _RULE_PATH_OVERRIDE = tuple(rule_paths) if rule_paths is not None else None
+    _RULE_SET_CACHE_KEY = None
+    _RULE_SET_CACHE = None
+
+
+def _create_rule_nodes(mat: bpy.types.Material, rule: rule_module.TextureRule) -> dict[str, bpy.types.Node]:
     return {
         node_spec.name: mat.node_tree.nodes.new(node_spec.node_type)
         for node_spec in rule.nodes
@@ -172,8 +193,8 @@ def _create_rule_nodes(mat: bpy.types.Material, rule: material_rules.TextureRule
 
 
 def _should_skip_connection(mat_ctx: MaterialContext,
-                            rule: material_rules.TextureRule,
-                            connection: material_rules.ConnectionSpec) -> bool:
+                            rule: rule_module.TextureRule,
+                            connection: rule_module.ConnectionSpec) -> bool:
     if (
         rule.diffuse
         and connection.source == "image.Alpha"
@@ -186,7 +207,12 @@ def _should_skip_connection(mat_ctx: MaterialContext,
 
 
 def _should_skip_rule(mat_ctx: MaterialContext,
-                      rule: material_rules.TextureRule) -> bool:
+                      rule: rule_module.TextureRule) -> bool:
+    for switch_name, expected_value in rule.skip_when:
+        actual_value = _static_switch_value(mat_ctx, switch_name)
+        if actual_value is not None and actual_value == expected_value:
+            return True
+
     if rule.name == "alpha_mask" and not _material_uses_texture_alpha(mat_ctx.blend_mode):
         return True
 
@@ -207,6 +233,22 @@ def _static_switch_is_disabled(mat_ctx: MaterialContext, *names: str) -> bool:
         if mat_ctx.static_switch_parameters.get(name.lower()) is False:
             return True
     return False
+
+
+def _static_switch_value(mat_ctx: MaterialContext, name: str) -> bool | None:
+    if name in mat_ctx.static_switch_parameters:
+        return mat_ctx.static_switch_parameters[name]
+
+    normalized_name = _normalize_static_switch_name(name)
+    for switch_name, value in mat_ctx.static_switch_parameters.items():
+        if _normalize_static_switch_name(switch_name) == normalized_name:
+            return value
+
+    return None
+
+
+def _normalize_static_switch_name(name: str) -> str:
+    return rule_module._normalize_token(name).replace(" ", "").replace("_", "")  # pylint: disable=protected-access
 
 
 def _material_uses_texture_alpha(blend_mode: str | None) -> bool:
@@ -257,7 +299,7 @@ def _material_uses_packed_diffuse_alpha_emission(mat_ctx: MaterialContext) -> bo
     return "e_level" in mat_ctx.scalar_parameters or "e_color" in mat_ctx.vector_parameters
 
 
-def _extract_blend_mode(desc_ast: lark.Tree) -> str | None:
+def _extract_blend_mode(desc_ast: t.Any) -> str | None:
     for child in desc_ast.children:
         def_name, _, value = child.children
         if def_name != "BasePropertyOverrides" or value.data != "structured_block":
@@ -265,14 +307,14 @@ def _extract_blend_mode(desc_ast: lark.Tree) -> str | None:
 
         for prop_override_entry in value.children:
             prop_name, _, prop_value = prop_override_entry.children
-            if prop_name.value == "BlendMode":
+            if prop_name == "BlendMode":
                 return prop_value.children[0].value.strip()
 
     return None
 
 
 def _configure_image_color_space(img_node: bpy.types.ShaderNodeTexImage,
-                                 rule: material_rules.TextureRule) -> None:
+                                 rule: rule_module.TextureRule) -> None:
     if rule.diffuse or img_node.image is None:
         return
 

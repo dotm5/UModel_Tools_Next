@@ -48,7 +48,8 @@ def main():
     addon_utils.modules_refresh()
     bpy.ops.preferences.addon_enable(module="umodel_tools")
     try:
-        from umodel_tools import material_rules, operators  # pylint: disable=import-error,import-outside-toplevel
+        from umodel_tools import operators  # pylint: disable=import-error,import-outside-toplevel
+        from umodel_tools.materials import rules as rule_module  # pylint: disable=import-error,import-outside-toplevel
 
         rna = bpy.ops.umodel_tools.import_unreal_map.get_rna_type()
         selector_rna = bpy.ops.umodel_tools.select_unreal_map_json.get_rna_type()
@@ -103,6 +104,35 @@ def main():
         if storage_items != expected_storage_items:
             raise AssertionError(f"Unexpected import storage items: {storage_items!r}")
 
+        if operators.UMODELTOOLS_OT_import_ueformat_model.bl_label != "Import UEFormat Asset":
+            raise AssertionError("UEFormat import operator should be labelled Import UEFormat Asset.")
+
+        ueformat_selector_rna = bpy.ops.umodel_tools.select_ueformat_model.get_rna_type()
+        ueformat_selector_props = set(ueformat_selector_rna.properties.keys())
+        for required_selector_prop in ("filepath", "filter_glob"):
+            if required_selector_prop not in ueformat_selector_props:
+                raise AssertionError(f"UEFormat selector is missing {required_selector_prop!r}")
+
+        ueformat_rna = bpy.ops.umodel_tools.import_ueformat_model.get_rna_type()
+        ueformat_prop_names = set(ueformat_rna.properties.keys())
+        ueformat_required = {
+            "filepath",
+            "asset_path",
+            "umodel_export_dir",
+            "asset_cache_dir",
+            "game_profile",
+            "path_inference_mode",
+            "enable_umodel_path_inference",
+            "enable_suffix_index",
+            "use_preferences_material_rules",
+            "use_generic_material_rules",
+            "use_calabiyau_material_rules",
+            "use_wuthering_waves_material_rules",
+        }
+        ueformat_missing = sorted(ueformat_required - ueformat_prop_names)
+        if ueformat_missing:
+            raise AssertionError(f"UEFormat import operator is missing properties: {ueformat_missing!r}")
+
         prefs = bpy.context.preferences.addons["umodel_tools"].preferences
         while len(prefs.material_rule_datasets):
             prefs.material_rule_datasets.remove(0)
@@ -112,15 +142,15 @@ def main():
 
         generic_dataset = prefs.material_rule_datasets[0]
         normalized_generic_path = os.path.normcase(os.path.abspath(generic_dataset.path))
-        if os.path.normcase(os.path.abspath(material_rules.default_rule_path("generic"))) == normalized_generic_path:
+        if os.path.normcase(os.path.abspath(rule_module.default_rule_path("generic"))) == normalized_generic_path:
             raise AssertionError("Generic material rules should be copied to the user UTM rule directory.")
-        if not normalized_generic_path.endswith(os.path.normcase(os.path.join("UTM", "rules", "generic.yaml"))):
+        if not normalized_generic_path.endswith(os.path.normcase(os.path.join("UTM", "rules", "generic.toml"))):
             raise AssertionError(f"Unexpected Generic material rule path: {generic_dataset.path}")
 
         calabiyau_dataset = prefs.material_rule_datasets[1]
         normalized_calabiyau_path = os.path.normcase(os.path.abspath(calabiyau_dataset.path))
         if not normalized_calabiyau_path.endswith(
-            os.path.normcase(os.path.join("UTM", "rules", "calabiyau_game.yaml"))
+            os.path.normcase(os.path.join("UTM", "rules", "calabiyau_game.toml"))
         ):
             raise AssertionError(f"Unexpected CalabiyauGame material rule path: {calabiyau_dataset.path}")
         if calabiyau_dataset.enabled:
@@ -134,7 +164,7 @@ def main():
         fake = types.SimpleNamespace(
             layout=FakeLayout(),
             filepath=os.path.join(ADDON_ROOT, "sample_maps", "Envi_Wlbl.json"),
-            umodel_export_dir=os.path.join(ADDON_ROOT, "sample_export"),
+            umodel_export_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export"),
             game_profile="generic",
             import_storage_mode="LINKED_ASSET_LIBRARY",
             load_pbr_maps=True,
@@ -195,10 +225,52 @@ def main():
             if required_draw_prop not in drawn_props:
                 raise AssertionError(f"draw() did not expose {required_draw_prop!r}")
 
+        ueformat_fake = types.SimpleNamespace(
+            layout=FakeLayout(),
+            filepath=os.path.join(
+                ADDON_ROOT,
+                "tests",
+                "fixtures",
+                "sample_export",
+                "PM",
+                "Content",
+                "Model.uemodel",
+            ),
+            asset_path=os.path.join("PM", "Content", "Model.uemodel"),
+            umodel_export_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export"),
+            asset_cache_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export", "temp-assets"),
+            game_profile="generic",
+            path_inference_mode="BASIC_DEFAULT",
+            enable_umodel_path_inference=True,
+            enable_suffix_index=True,
+            use_preferences_material_rules=False,
+            use_generic_material_rules=True,
+            use_calabiyau_material_rules=True,
+            use_wuthering_waves_material_rules=False,
+        )
+        operators.UMODELTOOLS_OT_import_ueformat_model.draw(ueformat_fake, bpy.context)
+        ueformat_drawn_props = [call[1] for call in ueformat_fake.layout.calls if call[0] == "prop"]
+        for required_draw_prop in (
+            "asset_path",
+            "umodel_export_dir",
+            "asset_cache_dir",
+            "game_profile",
+            "path_inference_mode",
+            "enable_umodel_path_inference",
+            "enable_suffix_index",
+            "use_preferences_material_rules",
+            "use_generic_material_rules",
+            "use_calabiyau_material_rules",
+            "use_wuthering_waves_material_rules",
+        ):
+            if required_draw_prop not in ueformat_drawn_props:
+                raise AssertionError(f"UEFormat draw() did not expose {required_draw_prop!r}")
+
         print(json.dumps({
             "operator_property_count": len(prop_names),
             "storage_items": storage_items,
             "drawn_props": drawn_props,
+            "ueformat_drawn_props": ueformat_drawn_props,
         }, indent=2))
         print("TEST_IMPORT_OPERATOR_UI_OK")
     finally:

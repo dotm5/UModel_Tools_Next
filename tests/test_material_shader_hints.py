@@ -1,9 +1,13 @@
 import os
 import sys
 import importlib.util
+import types
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+if ADDON_ROOT not in sys.path:
+    sys.path.insert(0, ADDON_ROOT)
+PACKAGE_ROOT = os.path.join(ADDON_ROOT, "umodel_tools")
 EXPORT_DIR = os.path.abspath(
     os.environ.get("UMODEL_TEST_EXPORT_DIR", os.path.join(ADDON_ROOT, os.pardir, "UmodelExport"))
 )
@@ -66,17 +70,17 @@ SCREEN_PROPS = (
 
 
 def main():
+    package = types.ModuleType("umodel_tools")
+    package.__path__ = [PACKAGE_ROOT]
+    sys.modules["umodel_tools"] = package
     props_txt_parser = _load_module(
         "props_txt_parser",
         os.path.join(ADDON_ROOT, "umodel_tools", "props_txt_parser.py"),
     )
-    material_shader_hints = _load_module(
-        "material_shader_hints",
-        os.path.join(ADDON_ROOT, "umodel_tools", "material_shader_hints.py"),
-    )
+    from umodel_tools.materials import rules as rule_module  # pylint: disable=import-outside-toplevel
 
     glass_ast, _, glass_overrides = props_txt_parser.parse_props_txt(GLASS_PROPS, mode="MATERIAL")
-    glass_hint = material_shader_hints.infer_shader_hint(
+    glass_hint = rule_module.infer_shader_hint(
         material_name="MI_PM_Glass_03b",
         material_path_local=(
             r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl\MI_PM_Glass_03b.props.txt"
@@ -99,7 +103,7 @@ def main():
         raise AssertionError(f"Unexpected roughness: {glass_hint.roughness!r}")
 
     water_ast, _, water_overrides = props_txt_parser.parse_props_txt(WATER_PROPS, mode="MATERIAL")
-    water_hint = material_shader_hints.infer_shader_hint(
+    water_hint = rule_module.infer_shader_hint(
         material_name="MI_Envi_Wlbl_Water_01",
         material_path_local=(
             r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl\MI_Envi_Wlbl_Water_01.props.txt"
@@ -120,7 +124,7 @@ def main():
         raise AssertionError(f"Unexpected water color: {water_hint.color!r}")
 
     water_02_ast, _, water_02_overrides = props_txt_parser.parse_props_txt(WATER_02_PROPS, mode="MATERIAL")
-    water_02_hint = material_shader_hints.infer_shader_hint(
+    water_02_hint = rule_module.infer_shader_hint(
         material_name="MI_Envi_Wlbl_Water_02",
         material_path_local=(
             r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl\MI_Envi_Wlbl_Water_02.props.txt"
@@ -158,7 +162,6 @@ def main():
 def _load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 

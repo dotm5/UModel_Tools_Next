@@ -10,13 +10,13 @@ ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 EXPORT_DIR = os.path.abspath(
     os.environ.get("UMODEL_TEST_EXPORT_DIR", os.path.join(ADDON_ROOT, os.pardir, "UmodelExport"))
 )
-TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_material_nodes")
+TEST_ROOT = os.path.join(ADDON_ROOT, "tests", "runtime", "material_nodes")
 CALABIYAU_RULE_PATH = os.path.join(
     ADDON_ROOT,
     "umodel_tools",
     "game_profiles",
     "rules",
-    "calabiyau_game.yaml",
+    "calabiyau_game.toml",
 )
 GLASS_MATERIAL = (
     r"PM\Content\PaperMan\Environment\Materials\Maps\Apartment\Wlbl"
@@ -72,7 +72,7 @@ def main():
     _enable_source_addon()
     _enable_calabiyau_rules()
 
-    from umodel_tools import asset_db, asset_importer, umodel_path_resolver  # pylint: disable=import-error,import-outside-toplevel
+    from umodel_tools import asset_importer, import_support, umodel_path_resolver  # pylint: disable=import-error,import-outside-toplevel
 
     try:
         if os.path.isdir(TEST_ROOT):
@@ -89,7 +89,7 @@ def main():
         importer.enable_suffix_index = True
         importer._reset_import_runtime_state()
 
-        db = asset_db.AssetDB(TEST_ROOT)
+        db = import_support.AssetDB(TEST_ROOT)
         importer._import_material_to_library(
             material_name="MI_PM_Glass_03b",
             material_path_local=GLASS_MATERIAL,
