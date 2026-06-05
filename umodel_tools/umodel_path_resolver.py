@@ -96,12 +96,21 @@ def infer_umodel_mount_aliases(asset_path: str) -> list[str]:
         if part.lower() != "content":
             continue
 
+        # <Project>/Content/<MountRoot>/A/B/C/Asset -> Content/<MountRoot>/A/B/C/Asset
+        if idx > 0:
+            add_alias(parts[idx:])
+
         # <Project>/Content/<MountRoot>/A/B/C/Asset -> <MountRoot>/A/B/C/Asset
         add_alias(parts[idx + 1:])
 
         # Engine/Content/BasicShapes/Cube -> Engine/BasicShapes/Cube
         if idx > 0 and parts[idx - 1].lower() == "engine":
             add_alias([parts[idx - 1], *parts[idx + 1:]])
+
+    if parts and parts[0].lower() == "game":
+        # /Game/A/B/Asset is commonly exported under Content/A/B/Asset.
+        add_alias(["Content", *parts[1:]])
+        add_alias(parts[1:])
 
     return aliases
 
