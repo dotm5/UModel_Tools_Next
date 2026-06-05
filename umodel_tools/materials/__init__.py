@@ -1,15 +1,16 @@
-"""Material rule matching, YAML parsing, and audit helpers.
+"""Material rule matching, config parsing, and audit helpers.
 
 This sub-package is pure Python — no Blender (bpy) dependency.
 """
 
-from .decision import ConnectionSpec, MaterialRuleSet, NodeSpec, TextureRule
-from . import rules_yaml
+from .rules import ConnectionSpec, MaterialRuleSet, MaterialShaderHint, NodeSpec, TextureRule
+from . import rules
 
 __all__ = [
     "ConnectionSpec",
     "MaterialRuleSet",
+    "MaterialShaderHint",
     "NodeSpec",
     "TextureRule",
-    "rules_yaml",
+    "rules",
 ]

@@ -6,8 +6,6 @@ import contextlib
 import json
 
 import bpy
-import tqdm
-from tqdm.contrib import DummyTqdmFile
 
 from . import preferences
 
@@ -154,16 +152,9 @@ def verbose_print(*args: t.Any):
 
 
 @contextlib.contextmanager
-def std_out_err_redirect_tqdm():
-    """Redirect stdout and stderr for tqdm.
-    """
-    orig_out_err = sys.stdout, sys.stderr
-    try:
-        sys.stdout, sys.stderr = map(DummyTqdmFile, orig_out_err)
-        yield orig_out_err[0]
-    # Always restore sys.stdout/err if necessary
-    finally:
-        sys.stdout, sys.stderr = orig_out_err
+def std_out_err_passthrough():
+    """Compatibility no-op for import loops that used to wrap console output."""
+    yield sys.stdout
 
 
 @contextlib.contextmanager

@@ -13,15 +13,15 @@ PYTHON_PATH = sys.executable
 
 
 def print_error(*s: str):
-    print(f"\033[91m {' '.join(s)}\033[00m")
+    print(" ".join(s))
 
 
 def print_success(*s: str):
-    print(f"\033[92m {' '.join(s)}\033[00m")
+    print(" ".join(s))
 
 
 def print_info(*s: str):
-    print(f"\033[93m {' '.join(s)}\033[00m")
+    print(" ".join(s))
 
 
 try:
@@ -46,6 +46,10 @@ def _ignore_dev_dirs(directory: str, names: t.Iterable[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
         if name in _DEV_IGNORE:
+            ignored.add(name)
+        elif name == "last_import_params.json":
+            ignored.add(name)
+        elif name.endswith(".pyc") or name.endswith(".pyo"):
             ignored.add(name)
         elif name.lower().endswith(".zip"):
             ignored.add(name)
@@ -90,9 +94,12 @@ def create_distribution(dist_path: t.Optional[str]):
                 ".gitignore",
                 "envi.png",
                 "Envi_Wlbl.json",
+                "last_import_params.json",
             )
             _DEV_EXCLUDE_GLOBS = (
                 "*.zip",
+                "*.pyc",
+                "*.pyo",
                 "material_mapping_audit*.csv",
             )
 
@@ -161,7 +168,10 @@ def prune_third_party(third_party_dir: str):
 
     for root, dirs, _ in os.walk(third_party_dir):
         for subdir in list(dirs):
-            if subdir == 'tests' or subdir.endswith('.dist-info'):
+            if (
+                subdir == 'tests'
+                or subdir.endswith('.dist-info')
+            ):
                 shutil.rmtree(os.path.join(root, subdir), ignore_errors=True)
 
     shutil.rmtree(os.path.join(third_party_dir, 'bin'), ignore_errors=True)

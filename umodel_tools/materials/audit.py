@@ -10,7 +10,7 @@ import os
 import re
 import typing as t
 
-from .decision import ConnectionSpec, TextureRule
+from .rules import ConnectionSpec, TextureRule
 
 
 def split_object_path(value: str) -> str:

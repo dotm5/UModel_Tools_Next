@@ -53,6 +53,7 @@ class ResolvedUModelPath:
     relative_path: str | None
     status: t.Literal["exact", "inferred", "suffix", "unresolved", "ambiguous"]
     warnings: tuple[str, ...] = ()
+    candidates: tuple[str, ...] = ()
     normalized_asset_path: str = ""
     attempted_extensions: tuple[str, ...] = ()
     expected_path: str = ""
@@ -71,7 +72,7 @@ def normalize_unreal_asset_path(asset_path: str) -> str:
         path = path[1:]
 
     lower_path = path.lower()
-    for suffix in (".props.txt", ".uasset", ".umap", ".pskx", ".psk", ".png", ".dds", ".tga"):
+    for suffix in (".props.txt", ".uasset", ".umap", ".uemodel", ".json", ".pskx", ".psk", ".png", ".dds", ".tga"):
         if lower_path.endswith(suffix):
             path = path[:-len(suffix)]
             break
@@ -202,6 +203,7 @@ def find_asset_by_suffix(
                 relative_path=None,
                 status="ambiguous",
                 warnings=(warning,),
+                candidates=tuple(matches),
                 normalized_asset_path=normalized_asset_path,
                 attempted_extensions=tuple(extensions),
                 expected_path=_expected_path_with_extension(normalized_asset_path, extensions),
