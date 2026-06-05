@@ -31,17 +31,13 @@ def _load_module(name: str, path: str) -> t.Any:
     return module
 
 
-material_rules = _load_module("audit_material_rules", os.path.join(UMODEL_TOOLS_ROOT, "material_rules.py"))
-material_shader_hints = _load_module(
-    "audit_material_shader_hints",
-    os.path.join(UMODEL_TOOLS_ROOT, "material_shader_hints.py"),
-)
 props_txt_parser = _load_module("audit_props_txt_parser", os.path.join(UMODEL_TOOLS_ROOT, "props_txt_parser.py"))
 umodel_path_resolver = _load_module(
     "audit_umodel_path_resolver",
     os.path.join(UMODEL_TOOLS_ROOT, "umodel_path_resolver.py"),
 )
 
+from umodel_tools.materials import rules as rule_module  # noqa: E402
 # Pure helpers moved to the materials sub-package.
 from umodel_tools.materials.audit import (  # noqa: E402
     actor_name,
@@ -101,8 +97,8 @@ def main() -> None:
         if args.strict_exact else umodel_path_resolver.AGGRESSIVE,
         enable_suffix_index=True,
     )
-    rule_set = material_rules.load_rule_sets(
-        material_rules.default_rule_path(rule_name.strip())
+    rule_set = rule_module.load_rule_sets(
+        rule_module.default_rule_path(rule_name.strip())
         for rule_name in args.rules.split(",")
         if rule_name.strip()
     )
@@ -146,7 +142,7 @@ def main() -> None:
 
 def audit_map(map_path: str,
               export_dir: str,
-              rule_set: material_rules.MaterialRuleSet,
+              rule_set: rule_module.MaterialRuleSet,
               settings: umodel_path_resolver.UModelPathInferenceSettings,
               include_all: bool,
               progress_interval: int = 0) -> list[dict[str, str]]:
@@ -173,13 +169,13 @@ def audit_map(map_path: str,
 
         props = entity.get("Properties") or {}
         static_mesh = props.get("StaticMesh") or {}
-        mesh_object_path = _split_object_path(static_mesh.get("ObjectPath", ""))
+        mesh_object_path = split_object_path(static_mesh.get("ObjectPath", ""))
         if not mesh_object_path or "BasicShapes" in mesh_object_path:
             continue
 
-        actor_name = _actor_name(entity)
+        actor_label = actor_name(entity)
         component_name = entity.get("Name", "")
-        mesh_asset_path = _asset_ref_to_props_path(mesh_object_path)
+        mesh_asset_path = asset_ref_to_props_path(mesh_object_path)
         material_refs = _material_refs_from_override(props)
         material_source = "json_override"
 
@@ -192,9 +188,9 @@ def audit_map(map_path: str,
             material_source = "mesh_props"
 
         if not material_refs:
-            rows.append(_base_row(
+            rows.append(base_row(
                 map_file=map_path,
-                actor_name=actor_name,
+                actor_name=actor_label,
                 component_name=component_name,
                 component_type=entity_type,
                 mesh_object_path=mesh_object_path,
@@ -210,7 +206,7 @@ def audit_map(map_path: str,
         for slot_index, material_ref in enumerate(material_refs):
             row = audit_material_ref(
                 map_path=map_path,
-                actor_name=actor_name,
+                actor_name=actor_label,
                 component_name=component_name,
                 component_type=entity_type,
                 mesh_object_path=mesh_object_path,
@@ -236,11 +232,11 @@ def audit_material_ref(map_path: str,
                        material_slot: str,
                        material_ref: str,
                        export_dir: str,
-                       rule_set: material_rules.MaterialRuleSet,
+                       rule_set: rule_module.MaterialRuleSet,
                        settings: umodel_path_resolver.UModelPathInferenceSettings) -> dict[str, str]:
-    material_asset_path = _asset_ref_to_props_path(material_ref)
-    material_name = _asset_name_from_props_path(material_asset_path)
-    row = _base_row(
+    material_asset_path = asset_ref_to_props_path(material_ref)
+    material_name = asset_name_from_props_path(material_asset_path)
+    row = base_row(
         map_file=map_path,
         actor_name=actor_name,
         component_name=component_name,
@@ -265,7 +261,7 @@ def audit_material_ref(map_path: str,
         row["fallback_reason"] = "missing_material_props"
         row["suggestion"] = "Export this material props file or check path inference settings."
         row["shader_plan"] = "fallback_principled"
-        row["node_summary"] = _principled_summary(has_ao=False)
+        row["node_summary"] = principled_summary(has_ao=False)
         return row
 
     desc_ast, texture_infos, base_prop_overrides = props_txt_parser.parse_props_txt(resolved.path, mode="MATERIAL")
@@ -274,7 +270,7 @@ def audit_material_ref(map_path: str,
     vectors = props_txt_parser.extract_vector_parameters(desc_ast)
     static_switches = props_txt_parser.extract_static_switch_parameters(desc_ast)
     blend_mode = base_prop_overrides.get("BlendMode") if base_prop_overrides else None
-    shader_hint = material_shader_hints.infer_shader_hint(
+    shader_hint = rule_module.infer_shader_hint(
         material_name=material_name,
         material_path_local=material_asset_path,
         parent_reference=parent_reference,
@@ -307,16 +303,16 @@ def audit_material_ref(map_path: str,
             unrecognized.append(f"{tex_param}={tex_ref}")
             continue
 
-        if _rule_disabled_by_static_switch(rule, static_switches):
+        if rule_disabled_by_static_switch(rule, static_switches):
             recognized.append(f"{tex_param}->{rule.name}(disabled)")
             continue
 
         recognized.append(f"{tex_param}->{rule.name}")
         if rule.diffuse:
             has_diffuse = True
-        if _rule_feeds_ao(rule):
+        if rule_feeds_ao(rule):
             has_ao = True
-        if _rule_feeds_alpha(rule, blend_mode):
+        if rule_feeds_alpha(rule, blend_mode):
             has_alpha_source = True
         if not tex_ref or tex_ref.strip().lower() == "none":
             missing_texture_params.append(tex_param)
@@ -324,7 +320,7 @@ def audit_material_ref(map_path: str,
     row["matched_rules"] = ";".join(recognized)
     row["unrecognized_texture_params"] = ";".join(unrecognized)
     row["missing_texture_params"] = ";".join(missing_texture_params)
-    row["shader_plan"] = _shader_plan_from_blend(blend_mode)
+    row["shader_plan"] = shader_plan_from_blend(blend_mode)
     row["node_summary"] = _node_summary_for_rules(
         rule_set,
         texture_infos,
@@ -339,14 +335,14 @@ def audit_material_ref(map_path: str,
     suggestions = []
     if unrecognized:
         fallback_reasons.append("unrecognized_texture_params")
-        suggestions.append("Add param/suffix aliases to generic.yaml or a material hint.")
+        suggestions.append("Add param/suffix aliases to generic.toml or a material hint.")
     if texture_infos and not recognized:
         fallback_reasons.append("no_texture_rules_matched")
         suggestions.append("Inspect texture parameter names and suffixes.")
     if (
         not texture_infos
         and row["shader_plan"] == "principled"
-        and not _looks_like_intentional_constant_material(material_name, parent_reference)
+        and not looks_like_intentional_constant_material(material_name, parent_reference)
     ):
         fallback_reasons.append("no_textures_or_material_hint")
         suggestions.append("Add material-level hints for constant-only materials if this should not be plain BSDF.")
@@ -391,25 +387,7 @@ def _material_refs_from_mesh_props(export_dir: str,
     return material_paths
 
 
-# Aliases so existing local call sites don't need renaming.
-_split_object_path = split_object_path
-_asset_ref_to_props_path = asset_ref_to_props_path
-_asset_name_from_props_path = asset_name_from_props_path
-_actor_name = actor_name
-_rule_feeds_ao = rule_feeds_ao
-_rule_feeds_alpha = rule_feeds_alpha
-_effective_rule_connections = effective_rule_connections
-_skip_rule_connection = skip_rule_connection
-_rule_disabled_by_static_switch = rule_disabled_by_static_switch
-_static_switch_is_disabled = static_switch_is_disabled
-_shader_plan_from_blend = shader_plan_from_blend
-_principled_summary = principled_summary
-_looks_like_intentional_constant_material = looks_like_intentional_constant_material
-_uses_packed_diffuse_alpha_emission = uses_packed_diffuse_alpha_emission
-_base_row = base_row
-
-
-def _shader_hint_summary(shader_hint: material_shader_hints.MaterialShaderHint) -> str:
+def _shader_hint_summary(shader_hint: rule_module.MaterialShaderHint) -> str:
     if shader_hint.shader == "glass" and shader_hint.alpha < 1.0:
         return (
             "glass.BSDF->mix_shader.Shader;"
@@ -422,7 +400,7 @@ def _shader_hint_summary(shader_hint: material_shader_hints.MaterialShaderHint) 
     return f"{shader_hint.shader}->output.Surface"
 
 
-def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
+def _node_summary_for_rules(rule_set: rule_module.MaterialRuleSet,
                             texture_infos: dict[str, str],
                             has_ao: bool,
                             blend_mode: str | None,
@@ -436,16 +414,16 @@ def _node_summary_for_rules(rule_set: material_rules.MaterialRuleSet,
             rule = rule_set.resolve(tex_param, tex_short_name)
             if rule is None:
                 continue
-            if _rule_disabled_by_static_switch(rule, static_switches):
+            if rule_disabled_by_static_switch(rule, static_switches):
                 continue
             for connection in rule.connections:
-                if _skip_rule_connection(rule, connection, blend_mode):
-                    if _uses_packed_diffuse_alpha_emission(blend_mode, scalars, vectors):
+                if skip_rule_connection(rule, connection, blend_mode):
+                    if uses_packed_diffuse_alpha_emission(blend_mode, scalars, vectors):
                         parts.append(f"{tex_param}:image.Alpha->bsdf.Emission Strength")
                     continue
                 parts.append(f"{tex_param}:{connection.source}->{connection.target}")
 
-    parts.append(_principled_summary(has_ao=has_ao))
+    parts.append(principled_summary(has_ao=has_ao))
     return ";".join(parts)
 
 
@@ -473,7 +451,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rules",
         default="generic",
-        help="Comma-separated material rule YAML names under umodel_tools/game_profiles/rules.",
+        help="Comma-separated material rule names under umodel_tools/game_profiles/rules.",
     )
     parser.add_argument(
         "--include-all",

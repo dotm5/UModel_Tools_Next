@@ -8,7 +8,7 @@ import bpy
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_world_environment")
+TEST_ROOT = os.path.join(ADDON_ROOT, "tests", "runtime", "world_environment")
 
 
 def main():

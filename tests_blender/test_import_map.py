@@ -7,9 +7,9 @@ import bpy
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-MAP_PATH = r"D:\addon\toTest\Envi_Wlbl.json"
-UMODEL_EXPORT_DIR = r"D:\UmodelExport"
-ASSET_CACHE_DIR = os.path.join(ADDON_ROOT, "test_runtime_blender_wlbl", "asset_cache_backend")
+MAP_PATH = os.path.join(ADDON_ROOT, "tests", "fixtures", "map_import_samples", "Envi_Wlbl.json")
+UMODEL_EXPORT_DIR = os.environ.get("UMODEL_TEST_EXPORT_DIR", r"D:\UmodelExport")
+ASSET_CACHE_DIR = os.path.join(ADDON_ROOT, "tests", "runtime", "blender_wlbl", "asset_cache_backend")
 
 
 class Tee(io.StringIO):

@@ -9,7 +9,6 @@ import traceback
 import typing as t
 
 import bpy
-import lark
 
 
 @t.runtime_checkable
@@ -23,11 +22,11 @@ class GameHandler(t.Protocol):
     # Description of the game
     GAME_DESCRIPTION: str
 
-    def process_material(mat: bpy.types.Material, desc_ast: lark.Tree, use_pbr: bool) -> None:
+    def process_material(mat: bpy.types.Material, desc_ast: t.Any, use_pbr: bool) -> None:
         """Does all sorts of unspecified processing on the material prior to texture imports.
 
         :param mat: Blender material we are processing.
-        :desc_ast: Lark AST tree representing the corresponding material descriptor. Can be used to obtain
+        :desc_ast: parsed material descriptor tree. Can be used to obtain
             any additional information required to implement game specifics.
         :use_pbr: True if material is imported in a PBR mode.
         """

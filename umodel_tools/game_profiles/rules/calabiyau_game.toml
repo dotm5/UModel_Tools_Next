@@ -1,0 +1,143 @@
+name = "CalabiyauGame"
+description = "Creator preference rules for CalabiyauGame material texture names."
+
+[[texture_rules]]
+name = "diffuse"
+diffuse = true
+[texture_rules.match]
+param_names = ["basecolor_low", "blend base", "blendbase", "main texture", "main tex", "maintex", "maintexture", "surface tex", "surface texture", "surfacetex", "inside tex", "inside texture", "insidetex", "crystal content tex", "crystalcontenttex", "matcap tex", "matcaptex", "content texture", "contenttexture", "jingti map", "jingti_map", "cloud tex", "cloudtex", "cloud texture", "cloudtexture"]
+suffixes = ["d2"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "ao_mix.Color1"
+[[texture_rules.connections]]
+from = "image.Alpha"
+to = "bsdf.Alpha"
+
+[[texture_rules]]
+name = "normal"
+[texture_rules.match]
+param_names = ["normalmapa", "normalmapb"]
+suffixes = []
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+invert_green = "ShaderNodeInvert"
+combine = "ShaderNodeCombineColor"
+normal_map = "ShaderNodeNormalMap"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "combine.Red"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "invert_green.Color"
+[[texture_rules.connections]]
+from = "invert_green.Color"
+to = "combine.Green"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "combine.Blue"
+[[texture_rules.connections]]
+from = "combine.Color"
+to = "normal_map.Color"
+[[texture_rules.connections]]
+from = "normal_map.Normal"
+to = "bsdf.Normal"
+
+[[texture_rules]]
+name = "orm"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["blend_ao_r_m_mask", "blend ao r m mask"]
+suffixes = ["blend_ao_r_m_mask"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "ao_mix.Color2"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "bsdf.Metallic"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "rmo"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["rmo", "ao roughness metallic height", "aoroughnessmetallicheight", "roughness metallic occlusion", "roughnessmetallicocclusion", "roughness metalness occlusion", "roughnessmetalnessocclusion"]
+suffixes = ["rmo", "roughnessmetallicocclusion"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+displacement = "ShaderNodeDisplacement"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "ao_mix.Color2"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "bsdf.Metallic"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "displacement.Displacement"
+to = "output.Displacement"
+[[texture_rules.connections]]
+from = "image.Alpha"
+to = "displacement.Height"
+
+[[texture_rules]]
+name = "alpha_mask"
+[texture_rules.match]
+param_names = ["alphamaska_tex", "alphamaskb_tex", "dissolve map", "dissolvemap", "dissolve mask", "dissolvemask", "dissolve tex", "dissolvetex", "noise tex", "noise texture", "noisetex", "main tex uv noise tex", "maintexuvnoise_tex", "vertex noise", "t-noise_wall", "t-noise_wallmask", "maskrg", "edge highlight mask", "edgehighlightmask", "alpha mask a", "shazi"]
+suffixes = ["m", "maska", "maskb"]
+[texture_rules.nodes]
+transparent = "ShaderNodeBsdfTransparent"
+mix_shader = "ShaderNodeMixShader"
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "mix_shader.Fac"
+[[texture_rules.connections]]
+from = "transparent.BSDF"
+to = "mix_shader.Shader"
+[[texture_rules.connections]]
+from = "bsdf.BSDF"
+to = "mix_shader.Shader_001"
+[[texture_rules.connections]]
+from = "mix_shader.Shader"
+to = "output.Surface"
+
+[[texture_rules]]
+name = "emissive"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["led tex", "t_ledtex"]
+suffixes = []
+[texture_rules.nodes]
+emission = "ShaderNodeEmission"
+add_shader = "ShaderNodeAddShader"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "emission.Color"
+[[texture_rules.connections]]
+from = "bsdf.BSDF"
+to = "add_shader.Shader"
+[[texture_rules.connections]]
+from = "emission.Emission"
+to = "add_shader.Shader_001"
+[[texture_rules.connections]]
+from = "add_shader.Shader"
+to = "output.Surface"

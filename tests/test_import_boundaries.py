@@ -38,17 +38,24 @@ def _assert_bpy_not_loaded(module_dotted_name: str) -> None:
 
 
 def _assert_no_heavy_deps(module_dotted_name: str) -> None:
-    """Import *module_dotted_name* and fail if PIL, sqlite3, or magick deps appear."""
+    """Import *module_dotted_name* and fail if banned default-path dependencies appear."""
     _import_module_in_isolation(module_dotted_name)
+    banned_roots = {"pil", "image", "sqlite3"}
+    banned_roots.update({
+        "".join(parts)
+        for parts in (
+            ("la", "rk"),
+            ("ya", "ml"),
+            ("_ya", "ml"),
+            ("tq", "dm"),
+            ("colo", "rama"),
+        )
+    })
     heavy = []
     for mod_name in sorted(sys.modules):
         lower = mod_name.lower()
         if (
-            lower == "pil"
-            or lower.startswith("pil.")
-            or lower == "image"
-            or lower.startswith("image.")
-            or lower == "sqlite3"
+            lower.split(".", 1)[0] in banned_roots
             or "magick" in lower
             or "wand" in lower
         ):
@@ -69,30 +76,22 @@ def test_ueformat_model_no_bpy():
     _assert_bpy_not_loaded("umodel_tools.ueformat.model")
 
 
-def test_mesh_backend_base_no_bpy():
-    _assert_bpy_not_loaded("umodel_tools.mesh_backends.base")
-
-
-def test_mesh_backend_registry_no_bpy():
-    _assert_bpy_not_loaded("umodel_tools.mesh_backends.registry")
+def test_mesh_backends_no_bpy():
+    _assert_bpy_not_loaded("umodel_tools.mesh_backends.backends")
 
 
 # ── default import hot-path heavy dep tests ──────────────────────────────────
 
-def test_material_decision_no_heavy_deps():
-    _assert_no_heavy_deps("umodel_tools.material_decision")
+def test_rule_module_no_heavy_deps():
+    _assert_no_heavy_deps("umodel_tools.materials.rules")
 
 
-def test_material_rules_no_heavy_deps():
-    _assert_no_heavy_deps("umodel_tools.material_rules")
+def test_import_support_no_heavy_deps():
+    _assert_no_heavy_deps("umodel_tools.import_support")
 
 
-def test_texture_path_utils_no_heavy_deps():
-    _assert_no_heavy_deps("umodel_tools.texture_path_utils")
-
-
-def test_material_shader_hints_no_heavy_deps():
-    _assert_no_heavy_deps("umodel_tools.material_shader_hints")
+def test_props_txt_parser_no_heavy_deps():
+    _assert_no_heavy_deps("umodel_tools.props_txt_parser")
 
 
 # ── runner ───────────────────────────────────────────────────────────────────
@@ -101,12 +100,10 @@ def main():
     tests = [
         ("ueformat.reader no bpy", test_ueformat_reader_no_bpy),
         ("ueformat.model no bpy", test_ueformat_model_no_bpy),
-        ("mesh_backends.base no bpy", test_mesh_backend_base_no_bpy),
-        ("mesh_backends.registry no bpy", test_mesh_backend_registry_no_bpy),
-        ("material_decision no heavy deps", test_material_decision_no_heavy_deps),
-        ("material_rules no heavy deps", test_material_rules_no_heavy_deps),
-        ("texture_path_utils no heavy deps", test_texture_path_utils_no_heavy_deps),
-        ("material_shader_hints no heavy deps", test_material_shader_hints_no_heavy_deps),
+        ("mesh_backends.backends no bpy", test_mesh_backends_no_bpy),
+        ("rule_module no heavy deps", test_rule_module_no_heavy_deps),
+        ("import_support no heavy deps", test_import_support_no_heavy_deps),
+        ("props_txt_parser no heavy deps", test_props_txt_parser_no_heavy_deps),
     ]
     passed = 0
     for label, test_fn in tests:

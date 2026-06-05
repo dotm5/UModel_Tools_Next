@@ -7,7 +7,7 @@ import bpy
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_no_profile_param_cache")
+TEST_ROOT = os.path.join(ADDON_ROOT, "tests", "runtime", "no_profile_param_cache")
 
 
 def main():

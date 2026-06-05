@@ -9,8 +9,8 @@ import bpy
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-UMODEL_EXPORT_DIR = os.path.join(ADDON_ROOT, "umodel_export_truncated_test")
-TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_local_single")
+UMODEL_EXPORT_DIR = os.path.join(ADDON_ROOT, "tests", "fixtures", "umodel_export_truncated_test")
+TEST_ROOT = os.path.join(ADDON_ROOT, "tests", "runtime", "local_single")
 VALID_MESH_OBJECT_PATH = (
     "/PM/Content/PaperMan/Environment/Meshes/Foliage/"
     "S_Envi_common_flowerpot_01a.S_Envi_common_flowerpot_01a"
@@ -85,6 +85,7 @@ def main():
                 min_mesh_count=1,
                 report_path_resolution_stats=True,
                 print_missing_asset_summary=True,
+                save_missing_asset_report=False,
             )
             print(f"RESULT {result}")
 
@@ -120,6 +121,9 @@ def main():
 
         print("TEST_LOCAL_SINGLE_FILE_MODE_OK")
     finally:
+        clear_scene()
+        if os.path.isdir(TEST_ROOT):
+            shutil.rmtree(TEST_ROOT)
         bpy.ops.preferences.addon_disable(module="umodel_tools")
 
 
