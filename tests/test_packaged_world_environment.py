@@ -9,7 +9,7 @@ import addon_utils
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 ZIP_PATH = os.path.join(ADDON_ROOT, "dist", "umodel_tools_next_manual_test.zip")
-TEST_ROOT = os.path.join(ADDON_ROOT, "test_runtime_packaged_world_environment")
+TEST_ROOT = os.path.join(ADDON_ROOT, "tests", "runtime", "packaged_world_environment")
 
 
 def main():

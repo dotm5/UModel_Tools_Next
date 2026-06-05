@@ -7,19 +7,17 @@ import enum
 
 import mathutils as mu
 import bpy
-import tqdm
 
-from . import asset_db
 from . import asset_importer
+from . import import_support
 from . import utils
 from . import localization
 from . import missing_asset_report
 from . import world_environment
-from . import map_progress
+from . import map_support
+from . import progress
 
-
-from .map_transform import InstanceTransform, get_parent_transform_matrix, parse_ue_object_name, split_object_path
-from .map_instances import StaticMesh
+from .map_support import InstanceTransform, StaticMesh, get_parent_transform_matrix, parse_ue_object_name
 
 
 _SKELETAL_ENTITY_TYPES = {"SkeletalMeshComponent", "SkeletalMeshActor"}
@@ -424,7 +422,7 @@ class MapImporter(asset_importer.AssetImporter):
                     umodel_export_dir: str,
                     asset_dir: str,
                     game_profile: str,
-                    db: t.Optional[asset_db.AssetDB] = None) -> bool:
+                    db: t.Optional[import_support.AssetDB] = None) -> bool:
         """Imports map placements to the current scene.
 
         :param map_path: Path to FModel .json output representing a .umap file.
@@ -480,30 +478,23 @@ class MapImporter(asset_importer.AssetImporter):
                 print("World environment summary: no supported map sky/fog settings found.")
 
             # handle the different entity types (mehses, lights, etc)
-            with utils.std_out_err_redirect_tqdm() as orig_stdout:
+            with utils.std_out_err_passthrough():
                 total_entities = len(json_object)
-                progress_owner = getattr(context, "window_manager", None)
-                if progress_owner is not None:
-                    progress_owner.progress_begin(0, total_entities)
                 static_mesh_seen = 0
                 last_progress_print = time.monotonic()
-                try:
-                    for entity_index, entity in enumerate(
-                        tqdm.tqdm(
-                            json_object,
-                            desc=(
-                                f"{localization.t_report('Importing map')} "
-                                f"\"{os.path.splitext(os.path.basename(map_path))[0]}\""
-                            ),
-                            file=orig_stdout,
-                            dynamic_ncols=True,
-                            ascii=True,
-                        ),
-                        start=1,
-                    ):
-                        if progress_owner is not None and (entity_index % 25 == 0 or entity_index == total_entities):
-                            progress_owner.progress_update(entity_index)
-
+                progress_desc = (
+                    f"{localization.t_report('Importing map')} "
+                    f"\"{os.path.splitext(os.path.basename(map_path))[0]}\""
+                )
+                for entity_index, entity in enumerate(
+                    progress.iter_progress(
+                        json_object,
+                        context=context,
+                        total=total_entities,
+                        desc=progress_desc,
+                    ),
+                    start=1,
+                ):
                         if import_failed:
                             break
 
@@ -515,9 +506,9 @@ class MapImporter(asset_importer.AssetImporter):
                         # static meshes
                         if entity_type in StaticMesh.static_mesh_types:
                             static_mesh_seen += 1
-                            if map_progress.should_print_static_mesh_progress(static_mesh_seen, last_progress_print):
+                            if map_support.should_print_static_mesh_progress(static_mesh_seen, last_progress_print):
                                 print(
-                                    map_progress.format_static_mesh_progress(
+                                    map_support.format_static_mesh_progress(
                                         entity_index=entity_index,
                                         total_entities=total_entities,
                                         static_mesh_seen=static_mesh_seen,
@@ -607,9 +598,6 @@ class MapImporter(asset_importer.AssetImporter):
                                 )
                             elif resource_type:
                                 self._record_non_map_asset_skip(entity, entity_type)
-                finally:
-                    if progress_owner is not None:
-                        progress_owner.progress_end()
 
         if import_failed:
             self._finish_map_import_report(import_collection)
@@ -695,7 +683,7 @@ class MapImporter(asset_importer.AssetImporter):
         import_collection: bpy.types.Collection,
         asset_dir: str,
         umodel_export_dir: str,
-        db: asset_db.AssetDB,
+        db: import_support.AssetDB,
         game_profile: str,
     ) -> None:
         props = entity.get("Properties", {}) or {}

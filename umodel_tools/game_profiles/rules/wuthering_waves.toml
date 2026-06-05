@@ -1,0 +1,94 @@
+name = "WutheringWaves"
+description = "Wuthering Waves character MSM_Toon material rules. Use with generic.toml for UEFormat object imports."
+
+[[texture_rules]]
+name = "ww_diffuse"
+diffuse = true
+[texture_rules.match]
+param_names = ["basemap", "base map", "pm_diffuse", "pm diffuse"]
+suffixes = ["d", "ppm_103"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "ao_mix.Color1"
+[[texture_rules.connections]]
+from = "image.Alpha"
+to = "bsdf.Alpha"
+
+[[texture_rules]]
+name = "ww_normal"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["pm_normals", "pm normals", "normalmap", "normal map"]
+suffixes = ["n"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+invert_green = "ShaderNodeInvert"
+combine = "ShaderNodeCombineColor"
+normal_map = "ShaderNodeNormalMap"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "combine.Red"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "invert_green.Color"
+[[texture_rules.connections]]
+from = "invert_green.Color"
+to = "combine.Green"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "combine.Blue"
+[[texture_rules.connections]]
+from = "combine.Color"
+to = "normal_map.Color"
+[[texture_rules.connections]]
+from = "normal_map.Normal"
+to = "bsdf.Normal"
+
+[[texture_rules]]
+name = "ww_mask1"
+[texture_rules.match]
+param_names = ["mask1"]
+suffixes = ["mask1_map", "body_mask1_map", "hair_mask1_map", "face_mask1_map"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "ww_mask2"
+[texture_rules.match]
+param_names = ["mask2"]
+suffixes = ["mask2", "mask2_map", "body_mask2", "body_mask2_map", "hair_mask2_map", "face_mask2_map"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "ww_matcap"
+[texture_rules.match]
+param_names = ["matcaptexture", "matcap texture", "materials1", "matcap_toon9", "metallic2"]
+suffixes = ["matcap", "matcap_toon9", "materials1", "metallic2"]
+
+[[texture_rules]]
+name = "ww_face_shadow"
+[texture_rules.match]
+param_names = ["faceshadowmask", "face shadow mask", "t_kanami_sdf"]
+suffixes = ["sdf", "kanami_sdf"]
+
+[[texture_rules]]
+name = "ww_emotion_mask"
+[texture_rules.match]
+param_names = ["emotionmask", "emotion mask", "expression_mask"]
+suffixes = ["expression_mask"]
+
+[[texture_rules]]
+name = "ww_emotion_overlay"
+[texture_rules.match]
+param_names = ["emotion_01", "emotion_02", "emotion_03", "emotion_04", "blush", "blush_2", "perspire", "tears"]
+suffixes = ["blush", "blush_2", "perspire", "tears"]

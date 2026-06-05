@@ -9,7 +9,7 @@ import bpy_extras.io_utils
 from . import PACKAGE_NAME
 from . import game_profiles
 from . import localization
-from . import material_rules
+from .materials import rules as rule_module
 from . import missing_asset_report
 
 
@@ -75,8 +75,8 @@ class UMODELTOOLS_PG_material_rule_dataset(bpy.types.PropertyGroup):
     )
 
     path: bpy.props.StringProperty(
-        name="Rule YAML Path",
-        description="Path to a material texture rule YAML file",
+        name="Rule File Path",
+        description="Path to a material texture rule TOML file",
         subtype='FILE_PATH'
     )
 
@@ -195,17 +195,17 @@ class UMODELTOOLS_OT_material_rule_dataset_actions(bpy.types.Operator):
 
 
 class UMODELTOOLS_OT_add_material_rule_dataset(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
-    """Load a material rule dataset YAML file."""
+    """Load a material rule dataset file."""
 
     bl_idname = "umodel_tools.add_material_rule_dataset"
     bl_label = "Load Material Rule Dataset"
-    bl_description = "Add a material texture rule YAML dataset"
+    bl_description = "Add a material texture rule dataset"
     bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
 
-    filename_ext = ".yaml"
+    filename_ext = ".toml"
 
     filter_glob: bpy.props.StringProperty(
-        default="*.yaml;*.yml",
+        default="*.toml",
         options={'HIDDEN'},
         maxlen=255
     )
@@ -239,7 +239,7 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
 
     material_rule_datasets: bpy.props.CollectionProperty(
         name="Material Rule Datasets",
-        description="Texture pattern rule YAML datasets used for material reconstruction",
+        description="Texture pattern rule datasets used for material reconstruction",
         type=UMODELTOOLS_PG_material_rule_dataset
     )
 
@@ -487,7 +487,7 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         description="Controls how aggressively UModel export paths are resolved",
         items=[
             ('BASIC_DEFAULT', "Basic Default", "Exact lookup plus common UModel mount truncation aliases"),
-            ('STRICT_EXACT', "Strict Exact", "Only use direct legacy path matching"),
+            ('STRICT_EXACT', "Strict Exact", "Only use direct path matching"),
             ('AGGRESSIVE', "Aggressive", "Use exact matching, mount truncation, and suffix index lookup")
         ],
         default='BASIC_DEFAULT'
@@ -535,7 +535,7 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
 
         dataset = self.material_rule_datasets.add()
         dataset.path = normalized_path
-        dataset.name = name or material_rules.dataset_display_name(normalized_path)
+        dataset.name = name or rule_module.dataset_display_name(normalized_path)
         dataset.enabled = enabled
         return dataset
 
@@ -691,15 +691,15 @@ def _normalize_rule_dataset_path(path: str) -> str:
 
 
 def _copy_default_rule_dataset_to_user_dir() -> tuple[str, str]:
-    name, path = material_rules.default_rule_dataset()
-    return name, _copy_rule_dataset_to_user_dir(path, preferred_name="generic.yaml")
+    name, path = rule_module.default_rule_dataset()
+    return name, _copy_rule_dataset_to_user_dir(path, preferred_name="generic.toml")
 
 
 def _copy_calabiyau_rule_dataset_to_user_dir() -> tuple[str, str]:
-    path = material_rules.default_rule_path("calabiyau_game")
-    return material_rules.dataset_display_name(path), _copy_rule_dataset_to_user_dir(
+    path = rule_module.default_rule_path("calabiyau_game")
+    return rule_module.dataset_display_name(path), _copy_rule_dataset_to_user_dir(
         path,
-        preferred_name="calabiyau_game.yaml",
+        preferred_name="calabiyau_game.toml",
     )
 
 
@@ -770,13 +770,13 @@ def _material_rule_user_dir(create: bool = False) -> str:
 
 
 def _safe_rule_dataset_file_name(file_name: str) -> str:
-    base_name = os.path.basename(file_name) or "material_rules.yaml"
+    base_name = os.path.basename(file_name) or "rule_module.toml"
     stem, ext = os.path.splitext(base_name)
-    if ext.lower() not in {".yaml", ".yml"}:
-        ext = ".yaml"
+    if ext.lower() not in rule_module.RULE_FILE_EXTENSIONS:
+        ext = ".toml"
 
     safe_stem = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in stem).strip("._")
-    return f"{safe_stem or 'material_rules'}{ext}"
+    return f"{safe_stem or 'rule_module'}{ext}"
 
 
 def _available_rule_dataset_path(rule_dir: str, file_name: str, allow_existing: bool) -> str:
@@ -812,46 +812,7 @@ def _should_refresh_managed_rule_dataset(source_path: str, target_path: str) -> 
     if stored_hash and stored_hash == _sha256_text(target_text):
         return True
 
-    return _looks_like_legacy_builtin_rule_dataset(target_text)
-
-
-def _looks_like_legacy_builtin_rule_dataset(text: str) -> bool:
-    legacy_rmo_block = (
-        "  - name: rmo\n"
-        "    prefer_suffix: true\n"
-        "    match:\n"
-        "      param_names:\n"
-        "        - rmo\n"
-        "        - roughness metallic occlusion\n"
-        "        - roughnessmetallicocclusion\n"
-        "        - roughness metalness occlusion\n"
-        "        - roughnessmetalnessocclusion\n"
-        "      suffixes:\n"
-        "        - rmo\n"
-        "        - roughnessmetallicocclusion\n"
-        "    nodes:\n"
-        "      split: ShaderNodeSeparateColor\n"
-        "    connections:\n"
-        "      - from: split.Red\n"
-        "        to: bsdf.Roughness\n"
-        "      - from: split.Green\n"
-        "        to: bsdf.Metallic\n"
-        "      - from: split.Blue\n"
-        "        to: ao_mix.Color2\n"
-        "      - from: image.Color\n"
-        "        to: split.Color\n"
-    )
-    return (
-        text.startswith("name: Generic\n")
-        and "description: Common Unreal material texture rules." in text
-        and (
-            legacy_rmo_block in text
-            or "        - cloud tex\n" in text
-            or "        - maintex\n" in text
-            or "        - t_ledtex\n" in text
-            or "  - name: rmo\n" in text
-        )
-    )
+    return False
 
 
 def _write_rule_dataset_hash(path: str) -> None:

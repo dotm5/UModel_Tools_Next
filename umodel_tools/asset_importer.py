@@ -7,18 +7,16 @@ import bpy
 
 from . import enums
 from . import utils
-from . import asset_db
 from . import props_txt_parser
 from . import game_profiles
 from . import umodel_path_resolver
 from . import localization
 from . import missing_asset_report
-from . import material_shader_hints
-from . import import_cache
-from . import library_linker
-from . import texture_path_utils
-from .mesh_backends import base as mesh_backend_base
-from .mesh_backends import registry as mesh_backend_registry
+from . import import_support
+from . import fmodel_material_json
+from .materials import rules as rule_module
+from .mesh_backends import backends as mesh_backends
+from .ueformat import conflicts as ueformat_conflicts
 
 
 LINKED_ASSET_LIBRARY = "LINKED_ASSET_LIBRARY"
@@ -33,6 +31,25 @@ MATERIAL_CACHE_VERSION = 7
 MATERIAL_CACHE_VERSION_KEY = "umodel_tools_material_cache_version"
 ASSET_CACHE_VERSION = 4
 ASSET_CACHE_VERSION_KEY = "umodel_tools_asset_cache_version"
+
+PLACEHOLDER_MATERIAL_UNRESOLVED = "unresolved"
+PLACEHOLDER_MATERIAL_AMBIGUOUS = "ambiguous"
+PLACEHOLDER_TEXTURE_MISSING = "texture_missing"
+PLACEHOLDER_TEXTURE_AMBIGUOUS = "texture_ambiguous"
+
+_PLACEHOLDER_PBR_COLORS = {
+    PLACEHOLDER_MATERIAL_UNRESOLVED: (0.45, 0.45, 0.45, 1.0),
+    PLACEHOLDER_MATERIAL_AMBIGUOUS: (1.0, 0.78, 0.18, 1.0),
+    PLACEHOLDER_TEXTURE_MISSING: (0.2, 0.45, 1.0, 1.0),
+    PLACEHOLDER_TEXTURE_AMBIGUOUS: (1.0, 0.25, 0.75, 1.0),
+}
+
+_PLACEHOLDER_PBR_SUFFIXES = {
+    PLACEHOLDER_MATERIAL_UNRESOLVED: "Unresolved_PBR",
+    PLACEHOLDER_MATERIAL_AMBIGUOUS: "Ambiguous_PBR",
+    PLACEHOLDER_TEXTURE_MISSING: "Texture_Missing_PBR",
+    PLACEHOLDER_TEXTURE_AMBIGUOUS: "Texture_Ambiguous_PBR",
+}
 
 
 @dataclasses.dataclass
@@ -132,7 +149,7 @@ def _configure_dithered_alpha_surface(mat: bpy.types.Material) -> None:
 def _apply_glass_shader_hint(mat: bpy.types.Material,
                              out: bpy.types.ShaderNodeOutputMaterial,
                              bsdf: bpy.types.ShaderNodeBsdfPrincipled,
-                             shader_hint: material_shader_hints.MaterialShaderHint) -> None:
+                             shader_hint: rule_module.MaterialShaderHint) -> None:
     for link in list(out.inputs['Surface'].links):
         mat.node_tree.links.remove(link)
 
@@ -166,8 +183,52 @@ def _remove_default_principled_nodes(mat: bpy.types.Material,
         mat.node_tree.nodes.remove(bsdf)
 
 
+def _placeholder_pbr_status(status: str) -> str:
+    return status if status in _PLACEHOLDER_PBR_COLORS else PLACEHOLDER_MATERIAL_UNRESOLVED
+
+
+def _placeholder_pbr_name(material_name: str, status: str) -> str:
+    status = _placeholder_pbr_status(status)
+    suffix = _PLACEHOLDER_PBR_SUFFIXES[status]
+    return utils.normalize_ue_name(f"{material_name}_{suffix}", fallback="Material_Placeholder")
+
+
+def _create_placeholder_pbr_material(material_name: str, status: str) -> bpy.types.Material:
+    status = _placeholder_pbr_status(status)
+    color = _PLACEHOLDER_PBR_COLORS[status]
+    new_mat = bpy.data.materials.new(_placeholder_pbr_name(material_name, status))
+    new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
+    new_mat.diffuse_color = color
+    new_mat.use_nodes = True
+    new_mat.node_tree.links.clear()
+    new_mat.node_tree.nodes.clear()
+
+    out = new_mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
+    bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
+    _set_node_input_default(bsdf, 'Base Color', color)
+    _set_node_input_default(bsdf, 'Roughness', 0.5)
+    _set_node_input_default(bsdf, 'Metallic', 0.0)
+    new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+    return new_mat
+
+
+def _write_placeholder_pbr_material_to_library(
+    material_name: str,
+    material_path_local_no_ext: str,
+    status: str,
+    material_lib_path: str,
+    db: import_support.AssetDB,
+) -> None:
+    new_mat = _create_placeholder_pbr_material(material_name, status)
+    new_mat.asset_mark()
+    new_mat.asset_data.catalog_id = db.uid_for_entry(material_path_local_no_ext)
+    os.makedirs(os.path.dirname(material_lib_path), exist_ok=True)
+    bpy.data.libraries.write(filepath=material_lib_path, datablocks={new_mat, }, fake_user=True)
+    bpy.data.materials.remove(new_mat, do_unlink=True)
+
+
 def _material_cache_is_current(material_lib_path: str) -> bool:
-    return import_cache.material_cache_is_current(
+    return import_support.material_cache_is_current(
         material_lib_path,
         MATERIAL_CACHE_VERSION_KEY,
         MATERIAL_CACHE_VERSION,
@@ -175,15 +236,15 @@ def _material_cache_is_current(material_lib_path: str) -> bool:
 
 
 def _remove_loaded_material_library(material_lib_path: str) -> None:
-    library_linker.remove_loaded_material_library(material_lib_path)
+    import_support.remove_loaded_material_library(material_lib_path)
 
 
 def _remove_loaded_asset_library(asset_lib_path: str) -> None:
-    library_linker.remove_loaded_asset_library(asset_lib_path)
+    import_support.remove_loaded_asset_library(asset_lib_path)
 
 
 def _is_diffuse_texture_path(tex_path: str) -> bool:
-    return texture_path_utils.is_diffuse_texture_path(tex_path)
+    return import_support.is_diffuse_texture_path(tex_path)
 
 
 class AssetImporter:
@@ -230,6 +291,7 @@ class AssetImporter:
     _missing_asset_context: dict[str, t.Any] = {}
     _last_missing_resolution: umodel_path_resolver.ResolvedUModelPath | None = None
     _last_import_report: missing_asset_report.ImportReport = missing_asset_report.ImportReport()
+    _last_ueformat_material_slots: list[dict[str, t.Any]] = []
 
     def _reset_import_runtime_state(self) -> None:
         self._unrecognized_texture_types.clear()
@@ -246,29 +308,85 @@ class AssetImporter:
         self._missing_asset_context = {}
         self._last_missing_resolution = None
         self._last_import_report = missing_asset_report.ImportReport()
+        self._last_ueformat_material_slots = []
+
+    def _ueformat_conflict_store_path(self) -> str:
+        return str(getattr(self, "ueformat_conflict_store_path", "") or "")
+
+    def _ueformat_asset_path_for_conflict(self) -> str:
+        return str(getattr(self, "_current_ueformat_asset_path", "") or getattr(self, "ueformat_asset_path", "") or "")
+
+    def _record_ueformat_conflict(
+        self,
+        *,
+        kind: str,
+        material_slot: str,
+        parameter_name: str,
+        original_reference: str,
+        status: str,
+        candidates: t.Sequence[str],
+    ) -> None:
+        store_path = self._ueformat_conflict_store_path()
+        uemodel_asset_path = self._ueformat_asset_path_for_conflict()
+        if not store_path or not uemodel_asset_path:
+            return
+
+        key = ueformat_conflicts.ConflictKey(
+            kind=kind,
+            uemodel_asset_path=uemodel_asset_path,
+            material_slot=material_slot,
+            parameter_name=parameter_name,
+            original_reference=original_reference,
+        )
+        store = ueformat_conflicts.UEFormatConflictStore(store_path)
+        store.record_conflict(key, status=status, candidates=list(candidates))
+        store.save()
+
+    @staticmethod
+    def _resolution_candidate_paths(resolution: umodel_path_resolver.ResolvedUModelPath) -> list[str]:
+        candidates = list(getattr(resolution, "candidates", ()) or ())
+        if candidates:
+            return candidates
+        if resolution.relative_path:
+            return [resolution.relative_path]
+        if resolution.expected_path:
+            return [resolution.expected_path]
+        return []
 
     def _path_cache_key(self, path: str) -> str:
-        return import_cache.path_cache_key(path)
+        return import_support.path_cache_key(path)
 
     def _linked_library_cache_key(self, lib_filepath: str, dtype: type[bpy.types.ID]) -> tuple[str, str]:
-        return library_linker.linked_library_cache_key(lib_filepath, dtype)
+        return import_support.linked_library_cache_key(lib_filepath, dtype)
 
     def _linked_libraries_search_cached(
         self,
         lib_filepath: str,
         dtype: type[bpy.types.ID],
     ) -> bpy.types.ID | None:
-        return library_linker.linked_libraries_search_cached(
+        return import_support.linked_libraries_search_cached(
             self._linked_library_cache,
             lib_filepath,
             dtype,
         )
 
     def _remember_linked_library(self, lib_filepath: str, data_block: bpy.types.ID | None) -> None:
-        library_linker.remember_linked_library(self._linked_library_cache, lib_filepath, data_block)
+        import_support.remember_linked_library(self._linked_library_cache, lib_filepath, data_block)
 
     def _forget_linked_library(self, lib_filepath: str) -> None:
-        library_linker.forget_linked_library(self._linked_library_cache, lib_filepath)
+        import_support.forget_linked_library(self._linked_library_cache, lib_filepath)
+
+    def _load_material_from_library(self, material_lib_path: str) -> bpy.types.Material:
+        if (new_mat := self._linked_libraries_search_cached(material_lib_path, bpy.types.Material)) is not None:
+            return new_mat
+
+        with utils.redirect_cstdout():
+            with bpy.data.libraries.load(filepath=material_lib_path, link=True) as (data_from, data_to):
+                data_to.materials = [data_from.materials[0]]
+
+            new_mat = data_to.materials[0]
+            self._remember_linked_library(material_lib_path, new_mat)
+            return new_mat
 
     def _is_asset_cache_stale_cached(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
         key = self._path_cache_key(asset_path_abs)
@@ -457,7 +575,7 @@ class AssetImporter:
                     umodel_export_dir: str,
                     game_profile: str,
                     load: bool = True,
-                    db: t.Optional[asset_db.AssetDB] = None
+                    db: t.Optional[import_support.AssetDB] = None
                     ) -> bpy.types.Object | None:
         """Loads the asset from library dir, or adds it to library and loads it.
 
@@ -540,7 +658,7 @@ class AssetImporter:
         return True
 
     def _asset_cache_is_current(self, asset_path_abs: str) -> bool:
-        return import_cache.asset_cache_is_current(
+        return import_support.asset_cache_is_current(
             asset_path_abs,
             ASSET_CACHE_VERSION_KEY,
             ASSET_CACHE_VERSION,
@@ -553,7 +671,7 @@ class AssetImporter:
         mesh_resolved = self._resolve_umodel_path(
             umodel_export_dir=umodel_export_dir,
             asset_path=asset_path_local_noext,
-            extensions=mesh_backend_registry.get_supported_mesh_extensions(),
+            extensions=mesh_backends.get_supported_mesh_extensions(),
         )
         if mesh_resolved.found and mesh_resolved.path is not None:
             source_paths.append(mesh_resolved.path)
@@ -633,7 +751,7 @@ class AssetImporter:
                                  tex_path: str,
                                  tex_lib_path: str,
                                  tex_umodel_path: str,
-                                 db: asset_db.AssetDB):
+                                 db: import_support.AssetDB):
         """Import image texture to asset library from UModel output.
 
         :param tex_path: Path to texture in game format.````
@@ -662,7 +780,7 @@ class AssetImporter:
     def _import_material_to_library(self,
                                     material_name: str,
                                     material_path_local: str,
-                                    db: asset_db.AssetDB,
+                                    db: import_support.AssetDB,
                                     umodel_export_dir: str,
                                     asset_library_dir: str,
                                     game_profile: str
@@ -700,9 +818,83 @@ class AssetImporter:
 
         desc_ast, texture_infos, base_prop_overrides = props_txt_parser.parse_props_txt(material_props.path,
                                                                                         mode='MATERIAL')
-        parent_reference = props_txt_parser.extract_parent_reference(desc_ast)
-        scalar_parameters = props_txt_parser.extract_scalar_parameters(desc_ast)
-        vector_parameters = props_txt_parser.extract_vector_parameters(desc_ast)
+        self._import_material_description_to_library(
+            material_name=material_name,
+            material_path_local=material_path_local,
+            material_path_local_no_ext=material_path_local_no_ext,
+            desc_source=desc_ast,
+            texture_infos=texture_infos,
+            base_prop_overrides=base_prop_overrides or {},
+            parent_reference=props_txt_parser.extract_parent_reference(desc_ast),
+            scalar_parameters=props_txt_parser.extract_scalar_parameters(desc_ast),
+            vector_parameters=props_txt_parser.extract_vector_parameters(desc_ast),
+            db=db,
+            umodel_export_dir=umodel_export_dir,
+            asset_library_dir=asset_library_dir,
+            game_profile_impl=game_profile_impl,
+        )
+
+    def _import_fmodel_json_material_to_library(self,
+                                                material_name: str,
+                                                material_path_local: str,
+                                                db: import_support.AssetDB,
+                                                umodel_export_dir: str,
+                                                asset_library_dir: str,
+                                                game_profile: str
+                                                ) -> None:
+        game_profile_impl = game_profiles.GAME_HANDLERS.get(game_profile)
+
+        if game_profile_impl is None:
+            raise NotImplementedError(f"Requested game profile {game_profile} is not implemented/available.")
+
+        material_path_local_no_ext = os.path.splitext(material_path_local)[0]
+        material_json = self._resolve_umodel_path(
+            umodel_export_dir=umodel_export_dir,
+            asset_path=material_path_local,
+            extensions=('.json',),
+        )
+        if not material_json.found or material_json.path is None:
+            self._last_missing_resolution = material_json
+            raise FileNotFoundError(
+                f"FModel material descriptor {material_path_local} was not found in the export path."
+            )
+
+        desc = fmodel_material_json.load_material_description(
+            material_json.path,
+            material_name=material_name,
+            material_path_local=material_path_local,
+        )
+        self._import_material_description_to_library(
+            material_name=material_name,
+            material_path_local=material_path_local,
+            material_path_local_no_ext=material_path_local_no_ext,
+            desc_source=desc,
+            texture_infos=desc.texture_infos,
+            base_prop_overrides=desc.base_prop_overrides,
+            parent_reference=desc.parent_reference,
+            scalar_parameters=desc.scalar_parameters,
+            vector_parameters=desc.vector_parameters,
+            db=db,
+            umodel_export_dir=umodel_export_dir,
+            asset_library_dir=asset_library_dir,
+            game_profile_impl=game_profile_impl,
+        )
+
+    def _import_material_description_to_library(self,
+                                                material_name: str,
+                                                material_path_local: str,
+                                                material_path_local_no_ext: str,
+                                                desc_source: t.Any,
+                                                texture_infos: dict[str, str],
+                                                base_prop_overrides: dict[str, str | float | bool],
+                                                parent_reference: str | None,
+                                                scalar_parameters: dict[str, float],
+                                                vector_parameters: dict[str, props_txt_parser.Color],
+                                                db: import_support.AssetDB,
+                                                umodel_export_dir: str,
+                                                asset_library_dir: str,
+                                                game_profile_impl: game_profiles.GameHandler
+                                                ) -> None:
         material_name = utils.normalize_ue_name(material_name, fallback="Material")
         new_mat = bpy.data.materials.new(utils.normalize_ue_name(material_name, fallback="Material"))
         new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
@@ -711,178 +903,211 @@ class AssetImporter:
         new_mat.use_nodes = True
         new_mat.node_tree.links.clear()
         new_mat.node_tree.nodes.clear()
-        game_profile_impl.process_material(mat=new_mat, desc_ast=desc_ast, use_pbr=self.load_pbr_maps)
+
+        if isinstance(desc_source, fmodel_material_json.MaterialDescription):
+            utils.verbose_print(
+                f"FModel JSON material: {material_name}, "
+                f"textures={len(desc_source.texture_infos)}, "
+                f"switches={list(desc_source.static_switch_parameters.keys())}, "
+                f"overrides={list(desc_source.base_prop_overrides.keys())}"
+            )
+
+        rule_paths_override = getattr(self, "material_rule_paths_override", None)
+        if rule_paths_override is not None and hasattr(game_profile_impl, "set_material_rule_path_override"):
+            game_profile_impl.set_material_rule_path_override(rule_paths_override)
 
         out = new_mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
+        shader_hint = None
 
-        if self.load_pbr_maps:
-            special_blend_mode = None
-            blend_mode = base_prop_overrides.get('BlendMode') if base_prop_overrides is not None else None
-            shader_hint = material_shader_hints.infer_shader_hint(
-                material_name=material_name,
-                material_path_local=material_path_local,
-                parent_reference=parent_reference,
-                scalar_parameters=scalar_parameters,
-                vector_parameters=vector_parameters,
-                blend_mode=blend_mode,
-            )
-
-            # set various material parameters
-            if base_prop_overrides is not None:
-
-                if (blend_mode := base_prop_overrides.get('BlendMode')) is not None:
-                    match blend_mode:
-                        case 'BLEND_Opaque (0)':
-                            pass
-                        case 'BLEND_Masked (1)':
-                            new_mat.blend_method = 'CLIP'
-                        case 'BLEND_Translucent (2)':
-                            new_mat.blend_method = 'BLEND'
-                        case 'BLEND_Additive (3)':
-                            special_blend_mode = enums.SpecialBlendingMode.Add
-                            new_mat.blend_method = 'BLEND'
-                        case 'BLEND_Modulate (4)':
-                            special_blend_mode = enums.SpecialBlendingMode.Mod
-                            new_mat.blend_method = 'BLEND'
-                        case _:
-                            self._warn_print(f"Warning: Unknown blending mode \'{blend_mode}\' found on importing "
-                                             f"material \"{material_name}\".")
-
-                if self.import_backface_culling and (two_sided := base_prop_overrides.get('TwoSided')) is not None:
-                    new_mat.use_backface_culling = not two_sided
-
-                if (alpha_threshold := base_prop_overrides.get('OpacityMaskClipValue')) is not None:
-                    new_mat.alpha_threshold = alpha_threshold
-
-            elif self.import_backface_culling:
-                new_mat.use_backface_culling = True
-
-            # create basic shader nodes and set their default values
-            bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
-
-            ao_mix = new_mat.node_tree.nodes.new('ShaderNodeMix')
-            ao_mix.data_type = 'RGBA'
-            ao_mix.blend_type = 'MULTIPLY'
-            ao_mix.inputs[6].default_value = (1, 1, 1, 1)
-            ao_mix.inputs[7].default_value = (1, 1, 1, 1)
-            new_mat.node_tree.links.new(ao_mix.outputs[2], utils.get_bsdf_input(bsdf, 'Base Color'))
-
-            # in order to simulate some blending modes special node logic is required
-            match special_blend_mode:
-                case None:
-                    new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
-                case enums.SpecialBlendingMode.Add:
-                    transparent_bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
-                    add_shader = new_mat.node_tree.nodes.new('ShaderNodeAddShader')
-
-                    new_mat.node_tree.links.new(bsdf.outputs['BSDF'], add_shader.inputs[0])
-                    new_mat.node_tree.links.new(transparent_bsdf.outputs['BSDF'], add_shader.inputs[1])
-                    new_mat.node_tree.links.new(add_shader.outputs[0], out.inputs['Surface'])
-
-                case enums.SpecialBlendingMode.Mod:
-                    shader_to_rgb = new_mat.node_tree.nodes.new('ShaderNodeShaderToRGB')
-                    transparent_bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
-                    new_mat.node_tree.links.new(bsdf.outputs['BSDF'], shader_to_rgb.inputs[0])
-                    new_mat.node_tree.links.new(shader_to_rgb.outputs['Color'], transparent_bsdf.inputs['Color'])
-                    new_mat.node_tree.links.new(transparent_bsdf.outputs['BSDF'], out.inputs['Surface'])
-
-            if shader_hint is not None and shader_hint.shader == "glass":
-                _apply_glass_shader_hint(new_mat, out, bsdf, shader_hint)
-        else:
-            bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfDiffuse')
-            new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
-
-        for tex_type, tex_path_and_name in texture_infos.items():
-            if shader_hint is not None:
-                continue
-
-            tex_path_no_ext, tex_short_name = os.path.splitext(tex_path_and_name)
-
-            # skip non-diffuse textures if we do not import PBR
-            if not self.load_pbr_maps and not game_profile_impl.is_diffuse_tex_type(tex_type, tex_short_name):
-                continue
-
-            # skip the texture if we don't know what to do with it
-            if not game_profile_impl.do_process_texture(tex_type, tex_short_name):
-                self._unrecognized_texture_types.add(tex_type)
-                continue
-
-            # normalize path from config
-            tex_path_no_ext = os.path.normpath(tex_path_no_ext)
-
-            # remove leading separator
-            tex_path_no_ext = tex_path_no_ext[1:] if tex_path_no_ext.startswith(os.sep) else tex_path_no_ext
-
-            tex_path = tex_path_no_ext + self.texture_format
-            tex_path_resolved = self._resolve_umodel_path(
-                umodel_export_dir=umodel_export_dir,
-                asset_path=tex_path,
-                extensions=(self.texture_format,),
-            )
-
-            tex_lib_path = os.path.join(asset_library_dir, tex_path)
-            tex_lib_blend_path = os.path.splitext(tex_lib_path)[0] + '.blend'
-
-            # check if texture is not already in the library
-            if not os.path.isfile(tex_lib_blend_path):
-                if tex_path_resolved.found and tex_path_resolved.path is not None:
-                    self._import_image_to_library(tex_path=tex_path,
-                                                  tex_lib_path=tex_lib_path,
-                                                  tex_umodel_path=tex_path_resolved.path,
-                                                  db=db)
-                else:
-                    self._import_stats.missing_texture_count += 1
-                    msg = (f"Warning: Material \"{material_name}\" referenced texture \"{tex_path}\", "
-                           "but it does not exist in the UModel export path.")
-                    self._record_missing_asset(
-                        resource_type="texture",
-                        json_asset_path=tex_path,
-                        message=msg,
-                        fallback_used="placeholder_color",
-                        resolution=tex_path_resolved,
-                        material_name=material_name,
-                        texture_parameter_name=tex_type,
-                        component_name=tex_type,
-                    )
-                    if self._missing_policy_fails("texture"):
-                        raise AssetImportPolicyError(msg)
-                    continue
-
-            if (img := self._linked_libraries_search_cached(tex_lib_blend_path, bpy.types.Image)) is None:
-                # load datablock from the library
-                with utils.redirect_cstdout():
-                    with bpy.data.libraries.load(filepath=tex_lib_blend_path, link=True) as (data_from, data_to):
-                        # we assume there is exactly one texture we have just written there
-                        data_to.images = [data_from.images[0]]
-
-                    img = data_to.images[0]
-                    self._remember_linked_library(tex_lib_blend_path, img)
-
-            img_node = new_mat.node_tree.nodes.new('ShaderNodeTexImage')
-            img_node.image = img
+        mesh_props = None
+        try:
+            game_profile_impl.process_material(mat=new_mat, desc_ast=desc_source, use_pbr=self.load_pbr_maps)
 
             if self.load_pbr_maps:
-                game_profile_impl.handle_material_texture_pbr(mat=new_mat,
-                                                              tex_type=tex_type,
-                                                              tex_short_name=tex_short_name,
-                                                              img_node=img_node,
-                                                              ao_mix_node=ao_mix,
-                                                              bsdf_node=bsdf,
-                                                              out_node=out)
-            # just simply connect the diffuse map to the shader node, if we do not go the PBR route
-            else:
-                game_profile_impl.handle_material_texture_simple(mat=new_mat,
-                                                                 tex_type=tex_type,
-                                                                 tex_short_name=tex_short_name,
-                                                                 img_node=img_node,
-                                                                 bsdf_node=bsdf)
+                special_blend_mode = None
+                blend_mode = base_prop_overrides.get('BlendMode') if base_prop_overrides is not None else None
+                shader_hint = rule_module.infer_shader_hint(
+                    material_name=material_name,
+                    material_path_local=material_path_local,
+                    parent_reference=parent_reference,
+                    scalar_parameters=scalar_parameters,
+                    vector_parameters=vector_parameters,
+                    blend_mode=blend_mode,
+                )
 
-        game_profile_impl.end_process_material(new_mat)
-        if self.load_pbr_maps:
-            if shader_hint is not None and shader_hint.shader == "glass":
-                _remove_default_principled_nodes(new_mat, ao_mix, bsdf)
+                # set various material parameters
+                if base_prop_overrides is not None:
+
+                    if (blend_mode := base_prop_overrides.get('BlendMode')) is not None:
+                        match blend_mode:
+                            case 'BLEND_Opaque (0)':
+                                pass
+                            case 'BLEND_Masked (1)':
+                                new_mat.blend_method = 'CLIP'
+                            case 'BLEND_Translucent (2)':
+                                new_mat.blend_method = 'BLEND'
+                            case 'BLEND_Additive (3)':
+                                special_blend_mode = enums.SpecialBlendingMode.Add
+                                new_mat.blend_method = 'BLEND'
+                            case 'BLEND_Modulate (4)':
+                                special_blend_mode = enums.SpecialBlendingMode.Mod
+                                new_mat.blend_method = 'BLEND'
+                            case _:
+                                self._warn_print(f"Warning: Unknown blending mode \'{blend_mode}\' found on importing "
+                                                 f"material \"{material_name}\".")
+
+                    if self.import_backface_culling and (two_sided := base_prop_overrides.get('TwoSided')) is not None:
+                        new_mat.use_backface_culling = not two_sided
+
+                    if (alpha_threshold := base_prop_overrides.get('OpacityMaskClipValue')) is not None:
+                        new_mat.alpha_threshold = alpha_threshold
+
+                elif self.import_backface_culling:
+                    new_mat.use_backface_culling = True
+
+                # create basic shader nodes and set their default values
+                bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
+
+                ao_mix = new_mat.node_tree.nodes.new('ShaderNodeMix')
+                ao_mix.data_type = 'RGBA'
+                ao_mix.blend_type = 'MULTIPLY'
+                ao_mix.inputs[6].default_value = (1, 1, 1, 1)
+                ao_mix.inputs[7].default_value = (1, 1, 1, 1)
+                new_mat.node_tree.links.new(ao_mix.outputs[2], utils.get_bsdf_input(bsdf, 'Base Color'))
+
+                # in order to simulate some blending modes special node logic is required
+                match special_blend_mode:
+                    case None:
+                        new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+                    case enums.SpecialBlendingMode.Add:
+                        transparent_bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
+                        add_shader = new_mat.node_tree.nodes.new('ShaderNodeAddShader')
+
+                        new_mat.node_tree.links.new(bsdf.outputs['BSDF'], add_shader.inputs[0])
+                        new_mat.node_tree.links.new(transparent_bsdf.outputs['BSDF'], add_shader.inputs[1])
+                        new_mat.node_tree.links.new(add_shader.outputs[0], out.inputs['Surface'])
+
+                    case enums.SpecialBlendingMode.Mod:
+                        shader_to_rgb = new_mat.node_tree.nodes.new('ShaderNodeShaderToRGB')
+                        transparent_bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
+                        new_mat.node_tree.links.new(bsdf.outputs['BSDF'], shader_to_rgb.inputs[0])
+                        new_mat.node_tree.links.new(shader_to_rgb.outputs['Color'], transparent_bsdf.inputs['Color'])
+                        new_mat.node_tree.links.new(transparent_bsdf.outputs['BSDF'], out.inputs['Surface'])
+
+                if shader_hint is not None and shader_hint.shader == "glass":
+                    _apply_glass_shader_hint(new_mat, out, bsdf, shader_hint)
             else:
-                _remove_unused_ao_mix(new_mat, ao_mix, bsdf)
+                bsdf = new_mat.node_tree.nodes.new('ShaderNodeBsdfDiffuse')
+                ao_mix = None
+                new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+
+            for tex_type, tex_path_and_name in texture_infos.items():
+                if shader_hint is not None:
+                    continue
+
+                tex_path_no_ext, tex_short_name = os.path.splitext(tex_path_and_name)
+
+                # skip non-diffuse textures if we do not import PBR
+                if not self.load_pbr_maps and not game_profile_impl.is_diffuse_tex_type(tex_type, tex_short_name):
+                    continue
+
+                # skip the texture if we don't know what to do with it
+                if not game_profile_impl.do_process_texture(tex_type, tex_short_name):
+                    self._unrecognized_texture_types.add(tex_type)
+                    continue
+
+                # normalize path from config
+                tex_path_no_ext = os.path.normpath(tex_path_no_ext)
+
+                # remove leading separator
+                tex_path_no_ext = tex_path_no_ext[1:] if tex_path_no_ext.startswith(os.sep) else tex_path_no_ext
+
+                tex_path = tex_path_no_ext + self.texture_format
+                tex_path_resolved = self._resolve_umodel_path(
+                    umodel_export_dir=umodel_export_dir,
+                    asset_path=tex_path,
+                    extensions=(self.texture_format,),
+                )
+
+                tex_lib_path = os.path.join(asset_library_dir, tex_path)
+                tex_lib_blend_path = os.path.splitext(tex_lib_path)[0] + '.blend'
+
+                # check if texture is not already in the library
+                if not os.path.isfile(tex_lib_blend_path):
+                    if tex_path_resolved.found and tex_path_resolved.path is not None:
+                        self._import_image_to_library(tex_path=tex_path,
+                                                      tex_lib_path=tex_lib_path,
+                                                      tex_umodel_path=tex_path_resolved.path,
+                                                      db=db)
+                    else:
+                        self._import_stats.missing_texture_count += 1
+                        texture_status = (
+                            PLACEHOLDER_TEXTURE_AMBIGUOUS
+                            if tex_path_resolved.status == "ambiguous"
+                            else PLACEHOLDER_TEXTURE_MISSING
+                        )
+                        msg = (f"Warning: Material \"{material_name}\" referenced texture \"{tex_path}\", "
+                               f"but it resolved as {tex_path_resolved.status}.")
+                        self._record_ueformat_conflict(
+                            kind="texture",
+                            material_slot=material_name,
+                            parameter_name=tex_type,
+                            original_reference=tex_path_and_name,
+                            status=tex_path_resolved.status,
+                            candidates=self._resolution_candidate_paths(tex_path_resolved),
+                        )
+                        self._record_missing_asset(
+                            resource_type="texture",
+                            json_asset_path=tex_path,
+                            message=msg,
+                            fallback_used=texture_status,
+                            resolution=tex_path_resolved,
+                            material_name=material_name,
+                            texture_parameter_name=tex_type,
+                            component_name=tex_type,
+                        )
+                        if self._missing_policy_fails("texture"):
+                            raise AssetImportPolicyError(msg)
+                        continue
+
+                if (img := self._linked_libraries_search_cached(tex_lib_blend_path, bpy.types.Image)) is None:
+                    # load datablock from the library
+                    with utils.redirect_cstdout():
+                        with bpy.data.libraries.load(filepath=tex_lib_blend_path, link=True) as (data_from, data_to):
+                            # we assume there is exactly one texture we have just written there
+                            data_to.images = [data_from.images[0]]
+
+                        img = data_to.images[0]
+                        self._remember_linked_library(tex_lib_blend_path, img)
+
+                img_node = new_mat.node_tree.nodes.new('ShaderNodeTexImage')
+                img_node.image = img
+
+                if self.load_pbr_maps:
+                    game_profile_impl.handle_material_texture_pbr(mat=new_mat,
+                                                                  tex_type=tex_type,
+                                                                  tex_short_name=tex_short_name,
+                                                                  img_node=img_node,
+                                                                  ao_mix_node=ao_mix,
+                                                                  bsdf_node=bsdf,
+                                                                  out_node=out)
+                # just simply connect the diffuse map to the shader node, if we do not go the PBR route
+                else:
+                    game_profile_impl.handle_material_texture_simple(mat=new_mat,
+                                                                     tex_type=tex_type,
+                                                                     tex_short_name=tex_short_name,
+                                                                     img_node=img_node,
+                                                                     bsdf_node=bsdf)
+
+            game_profile_impl.end_process_material(new_mat)
+            if self.load_pbr_maps:
+                if shader_hint is not None and shader_hint.shader == "glass":
+                    _remove_default_principled_nodes(new_mat, ao_mix, bsdf)
+                else:
+                    _remove_unused_ao_mix(new_mat, ao_mix, bsdf)
+        finally:
+            if rule_paths_override is not None and hasattr(game_profile_impl, "set_material_rule_path_override"):
+                game_profile_impl.set_material_rule_path_override(None)
 
         # new_mat.asset_generate_preview()
 
@@ -897,7 +1122,7 @@ class AssetImporter:
                                  asset_path: str,
                                  umodel_export_dir: str,
                                  game_profile: str,
-                                 db: t.Optional[asset_db.AssetDB] = None
+                                 db: t.Optional[import_support.AssetDB] = None
                                  ) -> None:
         """Import asset (mesh) to an assset library from UModel output.
 
@@ -914,9 +1139,10 @@ class AssetImporter:
         :raises NotImplementedError: Raised when requested game profile is not implemented or available.
         """
 
+        self._current_ueformat_asset_path = asset_path
         has_external_db = db is not None
         if db is None:
-            db = asset_db.AssetDB(asset_library_dir)
+            db = import_support.AssetDB(asset_library_dir)
 
         asset_local_dir = os.path.dirname(asset_path)
         catalog_uid = db.uid_for_entry(asset_local_dir) if asset_local_dir else None
@@ -929,7 +1155,7 @@ class AssetImporter:
         mesh_resolved = self._resolve_umodel_path(
             umodel_export_dir=umodel_export_dir,
             asset_path=asset_path_local_noext,
-            extensions=mesh_backend_registry.get_supported_mesh_extensions(),
+            extensions=mesh_backends.get_supported_mesh_extensions(),
         )
 
         found_path: str | None = None
@@ -942,7 +1168,7 @@ class AssetImporter:
             lod0_resolved = self._resolve_umodel_path(
                 umodel_export_dir=umodel_export_dir,
                 asset_path=lod0_base_path,
-                extensions=mesh_backend_registry.get_supported_mesh_extensions(),
+                extensions=mesh_backends.get_supported_mesh_extensions(),
             )
             if lod0_resolved.found and lod0_resolved.path is not None:
                 found_path = lod0_resolved.path
@@ -950,13 +1176,13 @@ class AssetImporter:
 
         if found_path is None:
             self._last_missing_resolution = mesh_resolved
-            extensions = "/".join(mesh_backend_registry.get_supported_mesh_extensions())
+            extensions = "/".join(mesh_backends.get_supported_mesh_extensions())
             raise FileNotFoundError(f"Error: Failed importing asset: {asset_mesh_path_noext} was not found "
                                     f"({extensions}, also tried _LOD0 suffix).")
 
         utils.verbose_print(f"Importing \"{found_path}\"")
 
-        mesh_context = mesh_backend_base.MeshImportContext(
+        mesh_context = mesh_backends.MeshImportContext(
             blender_context=context,
             asset_path=asset_path,
             asset_name=os.path.basename(asset_path_local_noext),
@@ -970,9 +1196,11 @@ class AssetImporter:
                 # TODO: wire this to import UI if more mesh backends become user-facing.
                 "preferred_backend": getattr(self, "mesh_import_backend", "AUTO"),
                 "prefer_pskx": True,
+                "import_skeleton": getattr(self, "import_ueformat_skeleton", False),
+                "import_morph_targets": getattr(self, "import_ueformat_morph_targets", False),
             },
         )
-        backend = mesh_backend_registry.get_mesh_backend_for_file(
+        backend = mesh_backends.get_mesh_backend_for_file(
             found_path,
             mesh_context,
             preferred_backend=mesh_context.options["preferred_backend"],
@@ -983,11 +1211,13 @@ class AssetImporter:
         result = backend.import_mesh(found_path, mesh_context)
         for warning in result.warnings:
             self._warn_print(f"Warning: {warning}")
-        if result.status != mesh_backend_base.IMPORTED or result.main_object is None:
+        if result.status != mesh_backends.IMPORTED or result.main_object is None:
             raise RuntimeError(f"Error: Failed importing asset {found_path} with backend {backend.id}.")
 
         obj = result.main_object
         animated = bool(result.metadata.get("animated_material_layout"))
+        backend_material_descriptors = result.metadata.get("material_descriptors") or []
+        backend_material_format = result.metadata.get("material_descriptor_format", "")
         asset_mesh_path_noext = os.path.splitext(found_path)[0]
         if asset_mesh_path_noext.endswith('_LOD0'):
             asset_mesh_path_noext = asset_mesh_path_noext[:-5]
@@ -1003,15 +1233,39 @@ class AssetImporter:
         # - read material descriptor file and identify associated materials
         try:
             # pylint: disable=unpacking-non-sequence
-            mesh_props = self._resolve_umodel_path(
-                umodel_export_dir=umodel_export_dir,
-                asset_path=asset_path_local_noext,
-                extensions=('.props.txt',),
-            )
-            if not mesh_props.found or mesh_props.path is None:
-                raise OSError()
-            _, mat_descriptors_paths = props_txt_parser.parse_props_txt(mesh_props.path,
-                                                                        mode='MESH')
+            if backend_material_descriptors:
+                mesh_props = None
+                material_descriptor_entries = [
+                    {
+                        "descriptor_path": str(descriptor.get("descriptor_path", "")),
+                        "slot_index": int(descriptor.get("slot_index", fallback_index) or fallback_index),
+                        "material_name": str(descriptor.get("material_name", "") or ""),
+                        "status": str(descriptor.get("status", "resolved") or "resolved"),
+                        "candidates": list(descriptor.get("candidates", []) or []),
+                    }
+                    for fallback_index, descriptor in enumerate(backend_material_descriptors)
+                    if descriptor.get("descriptor_path")
+                ]
+            else:
+                mesh_props = self._resolve_umodel_path(
+                    umodel_export_dir=umodel_export_dir,
+                    asset_path=asset_path_local_noext,
+                    extensions=('.props.txt',),
+                )
+                if not mesh_props.found or mesh_props.path is None:
+                    raise OSError()
+                _, mat_descriptors_paths = props_txt_parser.parse_props_txt(mesh_props.path,
+                                                                            mode='MESH')
+                material_descriptor_entries = [
+                    {
+                        "descriptor_path": descriptor_path,
+                        "slot_index": fallback_index,
+                        "material_name": "",
+                        "status": "resolved",
+                        "candidates": [],
+                    }
+                    for fallback_index, descriptor_path in enumerate(mat_descriptors_paths)
+                ]
         except OSError as exc:
             self._import_stats.missing_material_count += 1
             msg = (f"Warning: Loading material descriptor {asset_mesh_path_noext + '.props.txt'} failed. "
@@ -1021,7 +1275,7 @@ class AssetImporter:
                 json_asset_path=asset_path_local_noext + '.props.txt',
                 message=msg,
                 fallback_used="placeholder_material",
-                resolution=mesh_props,
+                resolution=mesh_props if mesh_props is not None else None,
                 component_name="StaticMesh material descriptor",
             )
             if self._missing_policy_fails("material"):
@@ -1030,7 +1284,7 @@ class AssetImporter:
             # attempt to obtain materials manually if descriptor is not available
             mat_desc_order_map = {mat.name: None for mat in obj.data.materials}
 
-            if animated and not mat_descriptors_paths:
+            if animated and not material_descriptor_entries:
                 if os.path.isdir(mat_dir := os.path.join(os.path.dirname(found_path), 'Materials')):
                     for root, _, files in os.walk(mat_dir):
                         for file in files:
@@ -1065,13 +1319,34 @@ class AssetImporter:
 
                         raise FileNotFoundError()
 
-                    mat_descriptors_paths = list(mat_desc_order_map.values())
+                    material_descriptor_entries = [
+                        {
+                            "descriptor_path": descriptor_path,
+                            "slot_index": fallback_index,
+                            "material_name": "",
+                            "status": "resolved",
+                            "candidates": [],
+                        }
+                        for fallback_index, descriptor_path in enumerate(mat_desc_order_map.values())
+                    ]
 
             # replace materials
             old_materials = list(obj.data.materials)
+            self._last_ueformat_material_slots = [
+                {
+                    "slot_index": int(entry.get("slot_index", index) or index),
+                    "material_name": str(entry.get("material_name", "") or ""),
+                    "descriptor_ref": str(entry.get("descriptor_path", "") or ""),
+                    "status": str(entry.get("status", "resolved") or "resolved"),
+                }
+                for index, entry in enumerate(material_descriptor_entries)
+            ] if backend_material_format == "fmodel_json" else []
 
             # initialize each material and populate it with data
-            for mat_desc_path in mat_descriptors_paths:
+            for mat_descriptor_entry in material_descriptor_entries:
+                mat_desc_path = str(mat_descriptor_entry.get("descriptor_path", ""))
+                descriptor_status = str(mat_descriptor_entry.get("status", "resolved") or "resolved")
+                descriptor_candidates = list(mat_descriptor_entry.get("candidates", []) or [])
                 material_path_local_no_ext, material_name = os.path.splitext(mat_desc_path)
                 material_name = material_name[1:]  # removing the .
 
@@ -1082,32 +1357,72 @@ class AssetImporter:
                 material_path_local_no_ext = material_path_local_no_ext[1:] \
                     if material_path_local_no_ext.startswith(os.sep) else material_path_local_no_ext
 
-                material_path_local = material_path_local_no_ext + '.props.txt'
+                material_descriptor_extension = '.json' if backend_material_format == "fmodel_json" else '.props.txt'
+                material_path_local = material_path_local_no_ext + material_descriptor_extension
                 material_lib_path = os.path.join(asset_library_dir, material_path_local_no_ext) + '.blend'
 
                 try:
-                    # add material to asset library if does not exist
-                    if not self._is_material_cache_current_cached(material_lib_path):
+                    if (
+                        backend_material_format == "fmodel_json"
+                        and descriptor_status in {PLACEHOLDER_MATERIAL_UNRESOLVED, PLACEHOLDER_MATERIAL_AMBIGUOUS}
+                    ):
+                        self._import_stats.missing_material_count += 1
+                        candidate_summary = f" Candidates: {descriptor_candidates[:5]!r}." if descriptor_candidates else ""
+                        msg = (
+                            f"Warning: Material \"{material_name}\" descriptor is {descriptor_status}; "
+                            f"placeholder PBR used instead.{candidate_summary}"
+                        )
+                        self._record_missing_asset(
+                            resource_type="material",
+                            json_asset_path=material_path_local,
+                            message=msg,
+                            fallback_used="placeholder_material",
+                            material_name=material_name,
+                            component_name="Material slot",
+                            resolution_status=descriptor_status,
+                        )
+                        self._record_ueformat_conflict(
+                            kind="material_json",
+                            material_slot=material_name,
+                            parameter_name="",
+                            original_reference=mat_desc_path,
+                            status=descriptor_status,
+                            candidates=descriptor_candidates,
+                        )
                         self._material_cache_current.pop(self._path_cache_key(material_lib_path), None)
                         self._forget_linked_library(material_lib_path)
                         _remove_loaded_material_library(material_lib_path)
-                        self._import_material_to_library(material_name=material_name,
-                                                         material_path_local=material_path_local,
-                                                         db=db,
-                                                         umodel_export_dir=umodel_export_dir,
-                                                         asset_library_dir=asset_library_dir,
-                                                         game_profile=game_profile)
+                        _write_placeholder_pbr_material_to_library(
+                            material_name=material_name,
+                            material_path_local_no_ext=material_path_local_no_ext,
+                            status=descriptor_status,
+                            material_lib_path=material_lib_path,
+                            db=db,
+                        )
                         self._material_cache_current[self._path_cache_key(material_lib_path)] = True
 
-                    if (new_mat := self._linked_libraries_search_cached(material_lib_path, bpy.types.Material)) is None:
-                        # load material from the library
-                        with utils.redirect_cstdout():
-                            with bpy.data.libraries.load(filepath=material_lib_path, link=True) as (data_from, data_to):
-                                # we presume there is exactly one material in the library, no validation performed
-                                data_to.materials = [data_from.materials[0]]
+                    # add material to asset library if does not exist
+                    elif not self._is_material_cache_current_cached(material_lib_path):
+                        self._material_cache_current.pop(self._path_cache_key(material_lib_path), None)
+                        self._forget_linked_library(material_lib_path)
+                        _remove_loaded_material_library(material_lib_path)
+                        if backend_material_format == "fmodel_json":
+                            self._import_fmodel_json_material_to_library(material_name=material_name,
+                                                                         material_path_local=material_path_local,
+                                                                         db=db,
+                                                                         umodel_export_dir=umodel_export_dir,
+                                                                         asset_library_dir=asset_library_dir,
+                                                                         game_profile=game_profile)
+                        else:
+                            self._import_material_to_library(material_name=material_name,
+                                                             material_path_local=material_path_local,
+                                                             db=db,
+                                                             umodel_export_dir=umodel_export_dir,
+                                                                         asset_library_dir=asset_library_dir,
+                                                                         game_profile=game_profile)
+                        self._material_cache_current[self._path_cache_key(material_lib_path)] = True
 
-                            new_mat = data_to.materials[0]
-                            self._remember_linked_library(material_lib_path, new_mat)
+                    new_mat = self._load_material_from_library(material_lib_path)
 
                 except FileNotFoundError as e:
                     self._import_stats.missing_material_count += 1
@@ -1121,13 +1436,22 @@ class AssetImporter:
                         material_name=material_name,
                         component_name="Material slot",
                     )
-                    if self._missing_policy_fails("material"):
+                    if backend_material_format != "fmodel_json" and self._missing_policy_fails("material"):
                         raise AssetImportPolicyError(
                             f"Missing material \"{material_name}\" while importing \"{asset_path}\"."
                         ) from e
-                    new_mat = bpy.data.materials.new(
-                        utils.normalize_ue_name(f"{material_name}_Placeholder", fallback="Material_Placeholder")
+                    self._material_cache_current.pop(self._path_cache_key(material_lib_path), None)
+                    self._forget_linked_library(material_lib_path)
+                    _remove_loaded_material_library(material_lib_path)
+                    _write_placeholder_pbr_material_to_library(
+                        material_name=material_name,
+                        material_path_local_no_ext=material_path_local_no_ext,
+                        status=PLACEHOLDER_MATERIAL_UNRESOLVED,
+                        material_lib_path=material_lib_path,
+                        db=db,
                     )
+                    self._material_cache_current[self._path_cache_key(material_lib_path)] = True
+                    new_mat = self._load_material_from_library(material_lib_path)
 
                 except OSError as exc:
                     self._import_stats.missing_material_count += 1
@@ -1140,19 +1464,28 @@ class AssetImporter:
                         material_name=material_name,
                         component_name="Material slot",
                     )
-                    if self._missing_policy_fails("material"):
+                    if backend_material_format != "fmodel_json" and self._missing_policy_fails("material"):
                         raise AssetImportPolicyError(
                             f"Missing material \"{material_name}\" while importing \"{asset_path}\"."
                         ) from exc
-                    new_mat = bpy.data.materials.new(
-                        utils.normalize_ue_name(f"{material_name}_Placeholder", fallback="Material_Placeholder")
+                    self._material_cache_current.pop(self._path_cache_key(material_lib_path), None)
+                    self._forget_linked_library(material_lib_path)
+                    _remove_loaded_material_library(material_lib_path)
+                    _write_placeholder_pbr_material_to_library(
+                        material_name=material_name,
+                        material_path_local_no_ext=material_path_local_no_ext,
+                        status=PLACEHOLDER_MATERIAL_UNRESOLVED,
+                        material_lib_path=material_lib_path,
+                        db=db,
                     )
+                    self._material_cache_current[self._path_cache_key(material_lib_path)] = True
+                    new_mat = self._load_material_from_library(material_lib_path)
 
                 new_materials.append((new_mat, material_name))
 
             for mat, mat_name in new_materials:
                 if mat_name in obj.data.materials:
-                    obj.data.materials[obj.data.materials.find(mat_name)] = mat
+                    obj.material_slots[obj.data.materials.find(mat_name)].material = mat
                 else:
                     obj.data.materials.append(mat)
 
@@ -1167,12 +1500,29 @@ class AssetImporter:
 
         asset_abs_lib_path = os.path.join(asset_library_dir, asset_path_local_noext) + '.blend'
         os.makedirs(os.path.dirname(asset_abs_lib_path), exist_ok=True)
-        bpy.data.libraries.write(asset_abs_lib_path, {obj, }, fake_user=True)
+        objects_to_write = set(result.objects or [obj])
+        bpy.data.libraries.write(asset_abs_lib_path, objects_to_write, fake_user=True)
 
         # cleanup
-        mesh = obj.data
-        bpy.data.objects.remove(obj, do_unlink=True)
-        bpy.data.meshes.remove(mesh, do_unlink=True)
+        data_blocks = [
+            imported_obj.data
+            for imported_obj in objects_to_write
+            if getattr(imported_obj, "data", None) is not None
+        ]
+        for imported_obj in list(objects_to_write):
+            try:
+                bpy.data.objects.remove(imported_obj, do_unlink=True)
+            except ReferenceError:
+                pass
+        for data_block in data_blocks:
+            try:
+                if getattr(data_block, "users", 0) == 0:
+                    if data_block.bl_rna.identifier == "Mesh":
+                        bpy.data.meshes.remove(data_block, do_unlink=True)
+                    elif data_block.bl_rna.identifier == "Armature":
+                        bpy.data.armatures.remove(data_block, do_unlink=True)
+            except ReferenceError:
+                pass
 
         for mat, _ in new_materials:
             try:

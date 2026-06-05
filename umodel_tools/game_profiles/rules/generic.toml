@@ -1,0 +1,273 @@
+name = "Generic"
+description = "Common Unreal material texture rules."
+
+[[texture_rules]]
+name = "diffuse"
+diffuse = true
+[texture_rules.match]
+param_names = ["d", "bc", "base color", "base color map", "base colour", "base colour map", "basecolor", "basecolour", "diffuse", "diffuse map", "diffuse and alpha", "diffuseandalpha", "albedo", "albedo map"]
+suffixes = ["d", "bc", "basecolor", "basecolour", "diffuse", "albedo"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "ao_mix.Color1"
+[[texture_rules.connections]]
+from = "image.Alpha"
+to = "bsdf.Alpha"
+
+[[texture_rules]]
+name = "normal"
+[texture_rules.match]
+param_names = ["n", "normal", "normal map", "normal texture", "normalmap", "tangent normal", "tangentnormal", "bump", "bump map"]
+suffixes = ["n", "normal", "normalmap", "bump"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+invert_green = "ShaderNodeInvert"
+combine = "ShaderNodeCombineColor"
+normal_map = "ShaderNodeNormalMap"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "combine.Red"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "invert_green.Color"
+[[texture_rules.connections]]
+from = "invert_green.Color"
+to = "combine.Green"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "combine.Blue"
+[[texture_rules.connections]]
+from = "combine.Color"
+to = "normal_map.Color"
+[[texture_rules.connections]]
+from = "normal_map.Normal"
+to = "bsdf.Normal"
+
+[[texture_rules]]
+name = "orm"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["orm", "occlusion roughness metallic", "occlusionroughnessmetallic", "occlusion roughness metalness", "occlusionroughnessmetalness", "ambient occlusion roughness metallic", "ambientocclusionroughnessmetallic", "ao_r_m_mask", "ao r m mask"]
+suffixes = ["orm", "occlusionroughnessmetallic", "ao_r_m_mask"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "ao_mix.Color2"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "bsdf.Metallic"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "mroh"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["mroh", "mroh/sroh", "metallic roughness occlusion height", "metallicroughnessocclusionheight"]
+suffixes = ["mroh", "sroh"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+displacement = "ShaderNodeDisplacement"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "bsdf.Metallic"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "ao_mix.Color2"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "displacement.Displacement"
+to = "output.Displacement"
+[[texture_rules.connections]]
+from = "image.Alpha"
+to = "displacement.Height"
+
+[[texture_rules]]
+name = "mro"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["mro", "mro/sro", "metallic roughness occlusion", "metallicroughnessocclusion"]
+suffixes = ["mro", "mroa"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "bsdf.Metallic"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "ao_mix.Color2"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "rm"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["rm", "roughness metallic", "roughnessmetallic"]
+suffixes = ["rm"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Metallic"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "sro"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["sro", "specular roughness occlusion", "specularroughnessocclusion"]
+suffixes = ["sro"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "bsdf.Specular"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "ao_mix.Color2"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+
+[[texture_rules]]
+name = "ao"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["ao", "ambient occlusion", "ambientocclusion", "occlusion", "occlusion map"]
+suffixes = ["ao", "occlusion"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "ao_mix.Color2"
+
+[[texture_rules]]
+name = "roughness"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["roughness", "roughness map", "roughness texture"]
+suffixes = ["rough", "roughness"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "bsdf.Roughness"
+
+[[texture_rules]]
+name = "metallic"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["metallic", "metallic map", "metallic texture", "metalness", "metalness map"]
+suffixes = ["metal", "metallic", "metalness"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "bsdf.Metallic"
+
+[[texture_rules]]
+name = "specular"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["specular", "specular map", "specularity"]
+suffixes = ["specular", "spec"]
+[[texture_rules.connections]]
+from = "image.Color"
+to = "bsdf.Specular"
+
+[[texture_rules]]
+name = "alpha_mask"
+[texture_rules.match]
+param_names = ["alpha mask", "alpha mask texture", "alpha map", "alpha", "alpha texture", "alpha tex", "mask", "mask map", "opacity", "opacity mask", "opacity mask texture", "cutout", "transparency", "transparent"]
+suffixes = ["mask", "alphamask", "opacity", "opacitymask", "cutout", "transparency"]
+[texture_rules.nodes]
+transparent = "ShaderNodeBsdfTransparent"
+mix_shader = "ShaderNodeMixShader"
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "mix_shader.Fac"
+[[texture_rules.connections]]
+from = "transparent.BSDF"
+to = "mix_shader.Shader"
+[[texture_rules.connections]]
+from = "bsdf.BSDF"
+to = "mix_shader.Shader_001"
+[[texture_rules.connections]]
+from = "mix_shader.Shader"
+to = "output.Surface"
+
+[[texture_rules]]
+name = "glass"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["glass", "glass map", "window", "window glass", "refraction", "lens"]
+suffixes = ["glass", "window", "lens", "refraction"]
+[texture_rules.nodes]
+glass = "ShaderNodeBsdfGlass"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "glass.Color"
+[[texture_rules.connections]]
+from = "glass.BSDF"
+to = "output.Surface"
+
+[[texture_rules]]
+name = "translucent"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["translucent", "translucent map", "translucency", "thin"]
+suffixes = ["translucent", "translucency"]
+[texture_rules.nodes]
+translucent = "ShaderNodeBsdfTranslucent"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "translucent.Color"
+[[texture_rules.connections]]
+from = "translucent.BSDF"
+to = "output.Surface"
+
+[[texture_rules]]
+name = "emissive"
+prefer_suffix = true
+[texture_rules.match]
+param_names = ["emissive", "emissive map", "emission", "emission map", "glow", "self illumination", "self illuminated"]
+suffixes = ["emissive", "emission", "glow"]
+[texture_rules.nodes]
+emission = "ShaderNodeEmission"
+add_shader = "ShaderNodeAddShader"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "emission.Color"
+[[texture_rules.connections]]
+from = "bsdf.BSDF"
+to = "add_shader.Shader"
+[[texture_rules.connections]]
+from = "emission.Emission"
+to = "add_shader.Shader_001"
+[[texture_rules.connections]]
+from = "add_shader.Shader"
+to = "output.Surface"
