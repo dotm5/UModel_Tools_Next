@@ -56,9 +56,6 @@ from = "image.Color"
 to = "ao_mix.Color1"
 ```
 
-## Visual Identity
-
-The project icon uses an abstract viewport, map grid, package cube, and shader node links to represent the recovery workflow without copying Unreal Engine, Blender, FModel, or UModel marks.
 
 ## Credits
 
