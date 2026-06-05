@@ -115,6 +115,7 @@ def test_direct_import_operator():
 
     result = bpy.ops.umodel_tools.import_ueformat_model(
         filepath=REFERENCE_UEMODEL,
+        asset_path=os.path.relpath(REFERENCE_UEMODEL, REFERENCE_ROOT),
         umodel_export_dir=REFERENCE_ROOT,
         asset_cache_dir=direct_root,
     )

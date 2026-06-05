@@ -99,6 +99,8 @@ _ZH_HANS_MESSAGES = {
     "Unresolved Count": "未解析数量",
     "Import Unreal Map": "导入 Unreal 地图",
     "Import UEFormat Asset": "导入 UEFormat 资产",
+    "UEFormat Model File": "UEFormat 模型文件",
+    "Asset Path": "资产路径",
     "UModel/FModel Export Directory": "UModel/FModel 导出目录",
     "Use Preference Rule Datasets": "使用偏好规则数据集",
     "Generic Rules": "Generic 规则",
