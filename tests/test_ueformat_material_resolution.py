@@ -223,3 +223,74 @@ def test_material_resolution_unresolved_keeps_compatible_fallback_descriptor(tmp
     assert descriptors[0].num_faces == 2
     assert descriptors[1].status == "unresolved"
     assert descriptors[1].descriptor_path == "MI_MissingName.MI_MissingName"
+
+
+def test_basic_path_inference_resolves_project_prefix_to_content_root(tmp_path):
+    with _scoped_umodel_tools_package():
+        from umodel_tools.umodel_path_resolver import (
+            BASIC_DEFAULT,
+            UModelPathInferenceSettings,
+            resolve_umodel_export_asset_path,
+        )
+
+        export_root = tmp_path
+        texture_path = (
+            export_root
+            / "Content"
+            / "PaperMan"
+            / "SkinAssets"
+            / "Characters"
+            / "Kanami"
+            / "S001"
+            / "Mesh3D"
+            / "Textuers"
+            / "T_Kanami_Body_D.png"
+        )
+        texture_path.parent.mkdir(parents=True)
+        texture_path.write_text("", encoding="utf-8")
+
+        settings = UModelPathInferenceSettings(
+            enable_umodel_path_inference=True,
+            path_inference_mode=BASIC_DEFAULT,
+            enable_suffix_index=True,
+        )
+        resolved = resolve_umodel_export_asset_path(
+            str(export_root),
+            "PM/Content/PaperMan/SkinAssets/Characters/Kanami/S001/Mesh3D/Textuers/T_Kanami_Body_D.png",
+            (".png",),
+            settings=settings,
+        )
+
+    assert resolved.status == "inferred"
+    assert resolved.relative_path == os.path.normpath(
+        "Content/PaperMan/SkinAssets/Characters/Kanami/S001/Mesh3D/Textuers/T_Kanami_Body_D.png"
+    )
+
+
+def test_basic_path_inference_resolves_game_mount_to_content_root(tmp_path):
+    with _scoped_umodel_tools_package():
+        from umodel_tools.umodel_path_resolver import (
+            BASIC_DEFAULT,
+            UModelPathInferenceSettings,
+            resolve_umodel_export_asset_path,
+        )
+
+        export_root = tmp_path
+        texture_path = export_root / "Content" / "PaperMan" / "Textures" / "T_Body.png"
+        texture_path.parent.mkdir(parents=True)
+        texture_path.write_text("", encoding="utf-8")
+
+        settings = UModelPathInferenceSettings(
+            enable_umodel_path_inference=True,
+            path_inference_mode=BASIC_DEFAULT,
+            enable_suffix_index=True,
+        )
+        resolved = resolve_umodel_export_asset_path(
+            str(export_root),
+            "/Game/PaperMan/Textures/T_Body.png",
+            (".png",),
+            settings=settings,
+        )
+
+    assert resolved.status == "inferred"
+    assert resolved.relative_path == os.path.normpath("Content/PaperMan/Textures/T_Body.png")

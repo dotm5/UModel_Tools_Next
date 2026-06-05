@@ -27,9 +27,9 @@ WARN_SKIP = "WARN_SKIP"
 USE_PLACEHOLDER = "USE_PLACEHOLDER"
 FAIL_IMPORT = "FAIL_IMPORT"
 
-MATERIAL_CACHE_VERSION = 7
+MATERIAL_CACHE_VERSION = 8
 MATERIAL_CACHE_VERSION_KEY = "umodel_tools_material_cache_version"
-ASSET_CACHE_VERSION = 4
+ASSET_CACHE_VERSION = 5
 ASSET_CACHE_VERSION_KEY = "umodel_tools_asset_cache_version"
 
 PLACEHOLDER_MATERIAL_UNRESOLVED = "unresolved"
@@ -1481,13 +1481,11 @@ class AssetImporter:
                     self._material_cache_current[self._path_cache_key(material_lib_path)] = True
                     new_mat = self._load_material_from_library(material_lib_path)
 
-                new_materials.append((new_mat, material_name))
-
-            for mat, mat_name in new_materials:
-                if mat_name in obj.data.materials:
-                    obj.material_slots[obj.data.materials.find(mat_name)].material = mat
+                if material_name in obj.data.materials:
+                    obj.material_slots[obj.data.materials.find(material_name)].material = new_mat
                 else:
-                    obj.data.materials.append(mat)
+                    obj.data.materials.append(new_mat)
+                new_materials.append((new_mat, material_name))
 
             # remove original materials
             for mat in old_materials:
