@@ -59,6 +59,7 @@ def main():
     generic_cases = [
         ("D", "T_Example_01", "diffuse"),
         ("BC", "T_Example_01", "diffuse"),
+        ("BaseMap", "T_Chiyo_Body_D_S102", "diffuse"),
         ("N", "BaseFlattenNormalMap", "normal"),
         ("ORM", "T_Birthdaygiftbox_ORM", "orm"),
         ("AO_R_M_MASK", "T_Envi_Olgk_Pier_01c_AO_R_M_MASK", "orm"),

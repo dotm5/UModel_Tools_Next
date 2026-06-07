@@ -5,7 +5,7 @@ description = "Common Unreal material texture rules."
 name = "diffuse"
 diffuse = true
 [texture_rules.match]
-param_names = ["d", "bc", "base color", "base color map", "base colour", "base colour map", "basecolor", "basecolour", "diffuse", "diffuse map", "diffuse and alpha", "diffuseandalpha", "albedo", "albedo map"]
+param_names = ["d", "bc", "base map", "basemap", "base color", "base color map", "base colour", "base colour map", "basecolor", "basecolour", "diffuse", "diffuse map", "diffuse and alpha", "diffuseandalpha", "albedo", "albedo map"]
 suffixes = ["d", "bc", "basecolor", "basecolour", "diffuse", "albedo"]
 [[texture_rules.connections]]
 from = "image.Color"
