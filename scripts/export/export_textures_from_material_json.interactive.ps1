@@ -480,6 +480,157 @@ function New-UModelTextureExportConfig {
     return $config
 }
 
+function Get-PackageCandidates {
+    param(
+        [string]$Package,
+        [bool]$TryPathVariants
+    )
+
+    $list = [System.Collections.Generic.List[string]]::new()
+    $list.Add($Package)
+
+    if ($TryPathVariants) {
+        $prefixes = @("PM/Content/PaperMan/", "PM/Content/")
+        foreach ($prefix in $prefixes) {
+            if ($Package.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $list.Add($Package.Substring($prefix.Length))
+            }
+        }
+
+        $withoutExt = @($list.ToArray())
+        foreach ($candidate in $withoutExt) {
+            if (-not $candidate.EndsWith(".uasset", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $list.Add("$candidate.uasset")
+            }
+        }
+    }
+
+    return @($list.ToArray() | Select-Object -Unique)
+}
+
+function New-UModelArgs {
+    param(
+        [object]$Config,
+        [string]$Candidate
+    )
+
+    $args = @(
+        "-path=$($Config.PakRoot)",
+        "-game=$($Config.GameTag)"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Config.AesKey)) {
+        $args += "-aes=$($Config.AesKey)"
+    }
+    $args += "-export"
+    $args += "-out=$($Config.OutDir)"
+    if (-not [string]::IsNullOrWhiteSpace($Config.TextureFormatArg)) {
+        $args += $Config.TextureFormatArg
+    }
+    if (-not $Config.Overwrite) {
+        $args += "-nooverwrite"
+    }
+    $args += $Candidate
+    return $args
+}
+
+function ConvertTo-CsvField {
+    param(
+        [object]$Value,
+        [switch]$AlwaysQuote
+    )
+
+    $text = if ($null -eq $Value) { "" } else { [string]$Value }
+    if ($AlwaysQuote -or $text.IndexOfAny([char[]]@(',', '"', "`r", "`n")) -ge 0) {
+        return '"' + $text.Replace('"', '""') + '"'
+    }
+
+    return $text
+}
+
+function Invoke-UModelTextureExport {
+    param(
+        [object]$Config,
+        [string[]]$Targets
+    )
+
+    [System.IO.Directory]::CreateDirectory($Config.OutDir) | Out-Null
+
+    $manifestPath = Join-Path $Config.OutDir "texture_manifest.txt"
+    $failedPath = Join-Path $Config.OutDir "failed_textures.txt"
+    $logPath = Join-Path $Config.OutDir "umodel_texture_export_log.txt"
+    $summaryPath = Join-Path $Config.OutDir "umodel_texture_export_summary.csv"
+
+    $Targets | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Remove-Item -LiteralPath $failedPath, $logPath, $summaryPath -ErrorAction SilentlyContinue
+    "target,status,selected_candidate,exit_code,seconds" | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+
+    $failed = 0
+    $index = 0
+    foreach ($target in $Targets) {
+        $index++
+        Write-Host ("[{0}/{1}] {2}" -f $index, $Targets.Count, $target) -ForegroundColor Cyan
+
+        $ok = $false
+        $selectedCandidate = ""
+        $exitCode = 1
+        $seconds = 0
+
+        foreach ($candidate in @(Get-PackageCandidates $target ([bool]$Config.TryPathVariants))) {
+            $selectedCandidate = $candidate
+            $args = @(New-UModelArgs -Config $Config -Candidate $candidate)
+            Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ""
+            Add-Content -LiteralPath $logPath -Encoding UTF8 -Value "===== EXPORT: $candidate ====="
+            Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ("COMMAND: `"$($Config.UModelExe)`" " + ($args -join " "))
+
+            if ($Config.DryRun) {
+                $exitCode = 0
+                $seconds = 0
+                $ok = $true
+                break
+            }
+
+            $timer = [System.Diagnostics.Stopwatch]::StartNew()
+            $output = & $Config.UModelExe @args 2>&1
+            $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+            $timer.Stop()
+            $seconds = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+            $output | ForEach-Object { Add-Content -LiteralPath $logPath -Encoding UTF8 -Value $_ }
+
+            if ($exitCode -eq 0) {
+                $ok = $true
+                break
+            }
+        }
+
+        $status = if ($ok) { "ok" } else { "failed" }
+        $summaryValues = @(
+            (ConvertTo-CsvField $target -AlwaysQuote),
+            (ConvertTo-CsvField $status),
+            (ConvertTo-CsvField $selectedCandidate -AlwaysQuote),
+            (ConvertTo-CsvField $exitCode),
+            (ConvertTo-CsvField $seconds)
+        )
+        Add-Content -LiteralPath $summaryPath -Encoding UTF8 -Value ($summaryValues -join ",")
+
+        if ($ok) {
+            Write-Host "  OK" -ForegroundColor Green
+        } else {
+            $failed++
+            Add-Content -LiteralPath $failedPath -Encoding UTF8 -Value $target
+            Write-Host "  FAILED" -ForegroundColor Red
+        }
+    }
+
+    return [pscustomobject]@{
+        Total = $Targets.Count
+        Failed = $failed
+        ManifestPath = $manifestPath
+        FailedPath = $failedPath
+        LogPath = $logPath
+        SummaryPath = $summaryPath
+    }
+}
+
 function Invoke-SelfTest {
     Write-Host "SELFTEST: tag parser"
 
@@ -612,6 +763,48 @@ Unreal engine 4:
         Assert-Equal (Resolve-TextureFormatArg "tga") "" "tga should use UModel default texture output"
     } finally {
         Remove-Item -LiteralPath $configRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host "SELFTEST: dry-run export"
+
+    $candidateRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("umodel-candidate-selftest-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $candidateRoot | Out-Null
+    try {
+        $candidates = @(Get-PackageCandidates "PM/Content/PaperMan/A/T_A" $true)
+        Assert-ArrayEqual $candidates @(
+            "PM/Content/PaperMan/A/T_A",
+            "A/T_A",
+            "PaperMan/A/T_A",
+            "PM/Content/PaperMan/A/T_A.uasset",
+            "A/T_A.uasset",
+            "PaperMan/A/T_A.uasset"
+        ) "path variants should be deterministic"
+
+        $dryConfig = [pscustomobject]@{
+            UModelExe = "D:\fake\umodel.exe"
+            PakRoot = "D:\fake\Paks"
+            JsonPath = "D:\fake\material.json"
+            OutDir = $candidateRoot
+            AesKey = "0xABC"
+            GameTag = "cal"
+            TextureFormat = "png"
+            TextureFormatArg = "-png"
+            DryRun = $true
+            Overwrite = $false
+            TryPathVariants = $false
+        }
+
+        $result = Invoke-UModelTextureExport -Config $dryConfig -Targets @("Game/A/T_A")
+        Assert-Equal $result.Total 1 "dry-run should process one target"
+        Assert-Equal $result.Failed 0 "dry-run should not fail"
+        Assert-Equal (Test-Path -LiteralPath (Join-Path $candidateRoot "texture_manifest.txt")) $true "manifest should be written"
+        $summaryPath = Join-Path $candidateRoot "umodel_texture_export_summary.csv"
+        Assert-Equal (Test-Path -LiteralPath $summaryPath) $true "summary should be written"
+        $summaryLines = @(Get-Content -LiteralPath $summaryPath -Encoding UTF8)
+        Assert-Equal $summaryLines[1] '"Game/A/T_A",ok,"Game/A/T_A",0,0' "dry-run summary row should be stable"
+        Assert-Equal (Test-Path -LiteralPath (Join-Path $candidateRoot "umodel_texture_export_log.txt")) $true "log should be written"
+    } finally {
+        Remove-Item -LiteralPath $candidateRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host "SELFTEST PASS"
