@@ -197,7 +197,8 @@ function Read-TextWithDefault {
     param(
         [string]$Prompt,
         [string]$Default = "",
-        [switch]$Required
+        [switch]$Required,
+        [switch]$AllowBlankCancel
     )
 
     while ($true) {
@@ -208,6 +209,10 @@ function Read-TextWithDefault {
 
         $value = Read-Host $displayPrompt
         if ([string]::IsNullOrWhiteSpace($value)) {
+            if ($AllowBlankCancel) {
+                return $null
+            }
+
             $value = $Default
         }
 
@@ -271,7 +276,12 @@ function Select-GameTag {
                 if ($number -ge 1 -and $number -le $allItems.Count) {
                     $selected = $allItems[$number - 1]
                     if ($selected.Tag -eq "__manual__") {
-                        return Read-TextWithDefault "Manual -game tag" "" -Required
+                        $manualTag = Read-TextWithDefault "Manual -game tag" "" -Required -AllowBlankCancel
+                        if ([string]::IsNullOrWhiteSpace($manualTag)) {
+                            continue
+                        }
+
+                        return $manualTag
                     }
 
                     return $selected.Tag
@@ -316,7 +326,12 @@ function Select-GameTag {
 
                 $selected = $visibleItems[$selectedIndex]
                 if ($selected.Tag -eq "__manual__") {
-                    return Read-TextWithDefault "Manual -game tag" "" -Required
+                    $manualTag = Read-TextWithDefault "Manual -game tag" "" -Required -AllowBlankCancel
+                    if ([string]::IsNullOrWhiteSpace($manualTag)) {
+                        continue
+                    }
+
+                    return $manualTag
                 }
 
                 return $selected.Tag
@@ -339,9 +354,6 @@ function Select-GameTag {
                 if ($visibleItems.Count -gt 0) {
                     $selectedIndex = ($selectedIndex + 1) % $visibleItems.Count
                 }
-            }
-            81 {
-                return $null
             }
             default {
                 if (-not [char]::IsControl($key.Character)) {
@@ -446,6 +458,7 @@ Unreal engine 4:
     $filteredMenuItems = @(Filter-GameTagItems $menuItems "stri")
     Assert-Equal $filteredMenuItems.Count 2 "filter should return two Strinova items"
     Assert-Equal $filteredMenuItems[0].Tag "cal" "filter should preserve original order"
+    Assert-Equal (@(Filter-GameTagItems $menuItems "q").Count) 0 "q should be treated as ordinary filter text"
     Assert-Equal (New-ManualGameTagItem).Tag "__manual__" "manual item should use sentinel tag"
 
     Write-Host "SELFTEST PASS"
