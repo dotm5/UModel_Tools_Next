@@ -810,13 +810,70 @@ Unreal engine 4:
     Write-Host "SELFTEST PASS"
 }
 
+function Show-ConfigSummary {
+    param(
+        [object]$Config,
+        [string[]]$Targets
+    )
+
+    Write-Host ""
+    Write-Host "UModel texture export configuration" -ForegroundColor Cyan
+    Write-Host "UModel:        $($Config.UModelExe)"
+    Write-Host "Pak root:      $($Config.PakRoot)"
+    Write-Host "Game tag:      $($Config.GameTag)"
+    Write-Host "JSON:          $($Config.JsonPath)"
+    Write-Host "Out dir:       $($Config.OutDir)"
+    Write-Host "AES:           $(if ([string]::IsNullOrWhiteSpace($Config.AesKey)) { '<none>' } else { '<provided>' })"
+    Write-Host "Format:        $($Config.TextureFormat)"
+    Write-Host "Dry run:       $($Config.DryRun)"
+    Write-Host "Overwrite:     $($Config.Overwrite)"
+    Write-Host "Path variants: $($Config.TryPathVariants)"
+    Write-Host "Targets:       $($Targets.Count)"
+    Write-Host ""
+}
+
+function Confirm-Continue {
+    param([bool]$Default = $true)
+
+    if ($NonInteractive) {
+        return $true
+    }
+
+    return Read-YesNo "Start export" $Default
+}
+
 function Main {
     if ($SelfTest) {
         Invoke-SelfTest
         return
     }
 
-    Write-Host "UModel texture export TUI is not implemented in this skeleton."
+    if ($PSVersionTable.PSVersion.Major -lt 7) {
+        Write-Host "PowerShell 7+ is recommended. Windows PowerShell 5.1 is best-effort only." -ForegroundColor Yellow
+    }
+
+    $config = New-UModelTextureExportConfig
+    $targets = @(Get-TextureTargetsFromJsonFile $config.JsonPath)
+    if ($targets.Count -eq 0) {
+        throw "No texture targets were found in JSON: $($config.JsonPath)"
+    }
+
+    Show-ConfigSummary -Config $config -Targets $targets
+    if (-not (Confirm-Continue -Default $true)) {
+        Write-Host "Canceled."
+        return
+    }
+
+    $result = Invoke-UModelTextureExport -Config $config -Targets $targets
+    Write-Host ""
+    Write-Host "Done."
+    Write-Host "Manifest: $($result.ManifestPath)"
+    Write-Host "Summary:  $($result.SummaryPath)"
+    Write-Host "Log:      $($result.LogPath)"
+    if ($result.Failed -gt 0) {
+        Write-Host "Failed:   $($result.FailedPath)" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 Main
