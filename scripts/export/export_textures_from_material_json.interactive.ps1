@@ -156,6 +156,203 @@ function Get-TextureTargetsFromJsonFiles {
     throw "Multi-file texture target extraction is not supported yet."
 }
 
+function Test-TuiAvailable {
+    if ($NonInteractive) {
+        return $false
+    }
+
+    try {
+        $null = $Host.UI.RawUI.KeyAvailable
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function New-ManualGameTagItem {
+    return [pscustomobject]@{
+        Tag = "__manual__"
+        Name = "Manual input"
+    }
+}
+
+function Filter-GameTagItems {
+    param(
+        [object[]]$Items,
+        [string]$Filter
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Filter)) {
+        return @($Items)
+    }
+
+    $needle = $Filter.Trim()
+    return @($Items | Where-Object {
+        ([string]$_.Tag).IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        ([string]$_.Name).IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    })
+}
+
+function Read-TextWithDefault {
+    param(
+        [string]$Prompt,
+        [string]$Default = "",
+        [switch]$Required
+    )
+
+    while ($true) {
+        $displayPrompt = $Prompt
+        if (-not [string]::IsNullOrWhiteSpace($Default)) {
+            $displayPrompt = "$Prompt [$Default]"
+        }
+
+        $value = Read-Host $displayPrompt
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            $value = $Default
+        }
+
+        if (-not $Required -or -not [string]::IsNullOrWhiteSpace($value)) {
+            return $value
+        }
+
+        Write-Host "A value is required."
+    }
+}
+
+function Read-YesNo {
+    param(
+        [string]$Prompt,
+        [bool]$Default = $true
+    )
+
+    $defaultText = if ($Default) { "Y/n" } else { "y/N" }
+    while ($true) {
+        $choice = (Read-Host "$Prompt [$defaultText]").Trim()
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            return $Default
+        }
+
+        if ([string]::Equals($choice, "y", [System.StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($choice, "yes", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+
+        if ([string]::Equals($choice, "n", [System.StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($choice, "no", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
+
+        Write-Host "Enter yes or no."
+    }
+}
+
+function Select-GameTag {
+    param(
+        [object[]]$Items,
+        [string]$Prompt = "Select -game tag"
+    )
+
+    $allItems = @($Items) + (New-ManualGameTagItem)
+
+    if (-not (Test-TuiAvailable)) {
+        Write-Host $Prompt
+        for ($i = 0; $i -lt $allItems.Count; $i++) {
+            Write-Host ("[{0}] {1} {2}" -f ($i + 1), $allItems[$i].Tag, $allItems[$i].Name)
+        }
+
+        while ($true) {
+            $choice = (Read-Host "Enter number or manual -game tag").Trim()
+            if ([string]::IsNullOrWhiteSpace($choice)) {
+                return $null
+            }
+
+            [int]$number = 0
+            if ([int]::TryParse($choice, [ref]$number)) {
+                if ($number -ge 1 -and $number -le $allItems.Count) {
+                    $selected = $allItems[$number - 1]
+                    if ($selected.Tag -eq "__manual__") {
+                        return Read-TextWithDefault "Manual -game tag" "" -Required
+                    }
+
+                    return $selected.Tag
+                }
+            } else {
+                return $choice
+            }
+
+            Write-Host "Enter a number from 1 to $($allItems.Count), or type a manual tag."
+        }
+    }
+
+    $filter = ""
+    $selectedIndex = 0
+
+    while ($true) {
+        $visibleItems = @(Filter-GameTagItems $allItems $filter)
+        if ($selectedIndex -ge $visibleItems.Count) {
+            $selectedIndex = [Math]::Max(0, $visibleItems.Count - 1)
+        }
+
+        Clear-Host
+        Write-Host $Prompt
+        Write-Host ("Filter: {0}" -f $filter)
+        Write-Host ""
+
+        if ($visibleItems.Count -eq 0) {
+            Write-Host "No matching tags."
+        } else {
+            for ($i = 0; $i -lt $visibleItems.Count; $i++) {
+                $marker = if ($i -eq $selectedIndex) { ">" } else { " " }
+                Write-Host ("{0} {1,-12} {2}" -f $marker, $visibleItems[$i].Tag, $visibleItems[$i].Name)
+            }
+        }
+
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        switch ($key.VirtualKeyCode) {
+            13 {
+                if ($visibleItems.Count -eq 0) {
+                    continue
+                }
+
+                $selected = $visibleItems[$selectedIndex]
+                if ($selected.Tag -eq "__manual__") {
+                    return Read-TextWithDefault "Manual -game tag" "" -Required
+                }
+
+                return $selected.Tag
+            }
+            27 {
+                return $null
+            }
+            8 {
+                if ($filter.Length -gt 0) {
+                    $filter = $filter.Substring(0, $filter.Length - 1)
+                    $selectedIndex = 0
+                }
+            }
+            38 {
+                if ($visibleItems.Count -gt 0) {
+                    $selectedIndex = ($selectedIndex + $visibleItems.Count - 1) % $visibleItems.Count
+                }
+            }
+            40 {
+                if ($visibleItems.Count -gt 0) {
+                    $selectedIndex = ($selectedIndex + 1) % $visibleItems.Count
+                }
+            }
+            81 {
+                return $null
+            }
+            default {
+                if (-not [char]::IsControl($key.Character)) {
+                    $filter += $key.Character
+                    $selectedIndex = 0
+                }
+            }
+        }
+    }
+}
+
 function Invoke-SelfTest {
     Write-Host "SELFTEST: tag parser"
 
@@ -238,6 +435,18 @@ Unreal engine 4:
 
     $emptyTags = @(Parse-UModelTagList "Unreal engine 4:`n")
     Assert-Equal $emptyTags.Count 0 "section-only tag list should produce no tags"
+
+    Write-Host "SELFTEST: game tag selector helpers"
+
+    $menuItems = @(
+        [pscustomobject]@{ Tag = "cal"; Name = "Calabiyau / Strinova" },
+        [pscustomobject]@{ Tag = "cal_old"; Name = "Calabiyau / Strinova (old)" },
+        [pscustomobject]@{ Tag = "hog"; Name = "Hogwarts Legacy" }
+    )
+    $filteredMenuItems = @(Filter-GameTagItems $menuItems "stri")
+    Assert-Equal $filteredMenuItems.Count 2 "filter should return two Strinova items"
+    Assert-Equal $filteredMenuItems[0].Tag "cal" "filter should preserve original order"
+    Assert-Equal (New-ManualGameTagItem).Tag "__manual__" "manual item should use sentinel tag"
 
     Write-Host "SELFTEST PASS"
 }
