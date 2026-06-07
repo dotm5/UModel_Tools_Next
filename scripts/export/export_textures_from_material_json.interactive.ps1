@@ -116,27 +116,30 @@ function Add-NormalizedTextureTarget {
 function Get-TextureTargetsFromJsonFile {
     param([string]$Path)
 
-    $json = Get-Content -Path $Path -Raw | ConvertFrom-Json
+    $json = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -NoEnumerate
     $targetsByKey = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $foundSupportedShape = $false
 
-    if ($null -ne $json.Textures) {
-        $foundSupportedShape = $true
+    if ($json -is [System.Array]) {
+        foreach ($item in $json) {
+            $textureParameterValues = $item.Properties.TextureParameterValues
+            if ($null -eq $textureParameterValues) {
+                continue
+            }
 
-        foreach ($property in $json.Textures.PSObject.Properties) {
-            Add-NormalizedTextureTarget $targetsByKey ([string]$property.Value)
+            $foundSupportedShape = $true
+            foreach ($textureParameterValue in @($textureParameterValues)) {
+                Add-NormalizedTextureTarget $targetsByKey ([string]$textureParameterValue.ParameterValue.ObjectPath)
+            }
         }
-    }
+    } else {
+        $texturesProperty = $json.PSObject.Properties["Textures"]
+        if ($null -ne $texturesProperty) {
+            $foundSupportedShape = $true
 
-    foreach ($item in @($json)) {
-        $textureParameterValues = $item.Properties.TextureParameterValues
-        if ($null -eq $textureParameterValues) {
-            continue
-        }
-
-        $foundSupportedShape = $true
-        foreach ($textureParameterValue in @($textureParameterValues)) {
-            Add-NormalizedTextureTarget $targetsByKey ([string]$textureParameterValue.ParameterValue.ObjectPath)
+            foreach ($property in $texturesProperty.Value.PSObject.Properties) {
+                Add-NormalizedTextureTarget $targetsByKey ([string]$property.Value)
+            }
         }
     }
 
@@ -189,7 +192,7 @@ Unreal engine 4:
                 Normal = "PM\Content\A\T_Body_N.0"
                 Duplicate = "game/a/t_body.t_body"
             }
-        } | ConvertTo-Json -Depth 5 | Set-Content -Path $dictJsonPath -Encoding UTF8
+        } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $dictJsonPath -Encoding UTF8
 
         $dictTargets = @(Get-TextureTargetsFromJsonFile $dictJsonPath)
         Assert-ArrayEqual $dictTargets @("Game/A/T_Body", "PM/Content/A/T_Body_N") "dictionary JSON texture values should normalize to sorted unique targets"
@@ -197,16 +200,24 @@ Unreal engine 4:
         Write-Host "SELFTEST: FModel array JSON targets"
 
         $fmodelJsonPath = Join-Path $selfTestRoot "fmodel.json"
-        @(
-            @{
-                Properties = @{
-                    TextureParameterValues = @(
-                        @{ ParameterValue = @{ ObjectPath = "/Game/B/T_Face.T_Face" } },
-                        @{ ParameterValue = @{ ObjectPath = "PM\Content\B\T_Mask.0" } }
-                    )
-                }
-            }
-        ) | ConvertTo-Json -Depth 10 | Set-Content -Path $fmodelJsonPath -Encoding UTF8
+        @"
+[
+  {
+    "Properties": {
+      "TextureParameterValues": [
+        { "ParameterValue": { "ObjectPath": "/Game/B/T_Face.T_Face" } }
+      ]
+    }
+  },
+  {
+    "Properties": {
+      "TextureParameterValues": [
+        { "ParameterValue": { "ObjectPath": "PM\\Content\\B\\T_Mask.0" } }
+      ]
+    }
+  }
+]
+"@ | Set-Content -LiteralPath $fmodelJsonPath -Encoding UTF8
 
         $fmodelTargets = @(Get-TextureTargetsFromJsonFile $fmodelJsonPath)
         Assert-ArrayEqual $fmodelTargets @("Game/B/T_Face", "PM/Content/B/T_Mask") "FModel array texture values should normalize to sorted unique targets"
