@@ -37,7 +37,7 @@ bl_info = {
     "author": "dotm5 (fork maintainer), Skarn (original author)",
     "version": (1, 2, 0),
     "blender": (5, 1, 0),
-    "description": "dotm5 fork of UModel Tools with expanded map import and material reconstruction",
+    "description": "Map-focused UModel/FModel recovery tools for Blender",
     "doc_url": "https://github.com/dotm5/UModel_Tools_Next",
     "tracker_url": "https://github.com/dotm5/UModel_Tools_Next/issues",
     "category": "Import-Export"

@@ -39,6 +39,7 @@ def _assert_bpy_not_loaded(module_dotted_name: str) -> None:
 
 def _assert_no_heavy_deps(module_dotted_name: str) -> None:
     """Import *module_dotted_name* and fail if banned default-path dependencies appear."""
+    before_import = set(sys.modules)
     _import_module_in_isolation(module_dotted_name)
     banned_roots = {"pil", "image", "sqlite3"}
     banned_roots.update({
@@ -52,7 +53,7 @@ def _assert_no_heavy_deps(module_dotted_name: str) -> None:
         )
     })
     heavy = []
-    for mod_name in sorted(sys.modules):
+    for mod_name in sorted(set(sys.modules) - before_import):
         lower = mod_name.lower()
         if (
             lower.split(".", 1)[0] in banned_roots

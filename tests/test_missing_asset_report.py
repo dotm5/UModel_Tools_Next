@@ -46,16 +46,9 @@ def main():
     bpy.ops.preferences.addon_enable(module="umodel_tools")
     try:
         prefs = bpy.context.preferences.addons["umodel_tools"].preferences
-        profile = prefs.profiles.add()
-        profile.name = "Missing Report Test"
-        prefs.active_profile_index = len(prefs.profiles) - 1
-        profile.game = "generic"
-        profile.umodel_export_dir = UMODEL_EXPORT_DIR
-        profile.asset_dir = os.path.join(TEST_ROOT, "profile_cache")
 
         missing_output = run_case(
             case_name="reporttest_missing_mesh",
-            profile=profile,
             mesh_paths=[
                 VALID_MESH_OBJECT_PATH,
                 missing_mesh_path(1),
@@ -81,7 +74,6 @@ def main():
 
         many_output = run_case(
             case_name="reporttest_many_missing",
-            profile=profile,
             mesh_paths=[missing_mesh_path(index) for index in range(35)],
             missing_mesh_policy="WARN_SKIP",
             min_mesh_count=0,
@@ -104,7 +96,6 @@ def main():
 
         no_missing_output = run_case(
             case_name="reporttest_no_missing",
-            profile=profile,
             mesh_paths=[],
             missing_mesh_policy="WARN_SKIP",
             min_mesh_count=0,
@@ -118,7 +109,6 @@ def main():
 
         strict_output = run_case(
             case_name="reporttest_strict_missing",
-            profile=profile,
             mesh_paths=[missing_mesh_path(99)],
             missing_mesh_policy="FAIL_IMPORT",
             min_mesh_count=0,
@@ -143,7 +133,6 @@ def main():
 
 def run_case(
     case_name,
-    profile,
     mesh_paths,
     missing_mesh_policy,
     min_mesh_count,
@@ -155,7 +144,6 @@ def run_case(
     if os.path.isdir(cache_dir):
         shutil.rmtree(cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
-    profile.asset_dir = cache_dir
 
     stdout_capture = Tee(sys.stdout)
     stderr_capture = Tee(sys.stderr)
@@ -165,7 +153,6 @@ def run_case(
                 filepath=map_path,
                 umodel_export_dir=UMODEL_EXPORT_DIR,
                 asset_cache_dir=cache_dir,
-                import_storage_mode="LINKED_ASSET_LIBRARY",
                 path_inference_mode="BASIC_DEFAULT",
                 missing_mesh_policy=missing_mesh_policy,
                 missing_material_policy="USE_PLACEHOLDER",

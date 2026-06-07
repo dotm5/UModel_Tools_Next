@@ -35,6 +35,7 @@ class TextureRule:
     suffixes: frozenset[str]
     nodes: tuple[NodeSpec, ...]
     connections: tuple[ConnectionSpec, ...]
+    node_groups: tuple[str, ...] = ()
     skip_when: frozenset[tuple[str, bool]] = frozenset()
 
     def matches_param(self, tex_type: str) -> bool:
@@ -174,6 +175,7 @@ def _parse_texture_rule(raw_rule: t.Any, rule_path: str) -> TextureRule:
         prefer_suffix=bool(raw_rule.get("prefer_suffix", False)),
         param_names=frozenset(import_support.normalize_token(value) for value in match.get("param_names", [])),
         suffixes=frozenset(import_support.normalize_token(value) for value in match.get("suffixes", [])),
+        node_groups=tuple(str(value).strip() for value in raw_rule.get("node_groups", []) if str(value).strip()),
         nodes=tuple(NodeSpec(str(node_name), str(node_type)) for node_name, node_type in nodes.items()),
         connections=tuple(_parse_connection(connection, name, rule_path) for connection in connections),
         skip_when=_parse_skip_when(raw_rule.get("skip_when", {}), name, rule_path),

@@ -22,9 +22,6 @@ def main():
     bpy.ops.preferences.addon_enable(module="umodel_tools")
     try:
         prefs = bpy.context.preferences.addons["umodel_tools"].preferences
-        while len(prefs.profiles):
-            prefs.profiles.remove(0)
-        prefs.active_profile_index = 0
 
         export_dir = os.path.join(TEST_ROOT, "UmodelExport")
         cache_dir = os.path.join(export_dir, "temp-assets")
@@ -38,13 +35,12 @@ def main():
             filepath=map_path,
             umodel_export_dir=export_dir,
             game_profile="generic",
-            import_storage_mode="LINKED_ASSET_LIBRARY",
             enable_import_validation=False,
             save_missing_asset_report=True,
         )
         print(f"RESULT {result}")
         if result != {"FINISHED"}:
-            raise AssertionError(f"Expected FINISHED without active profile, got {result!r}")
+            raise AssertionError(f"Expected FINISHED without saved profiles, got {result!r}")
         if not os.path.isdir(cache_dir):
             raise AssertionError(f"Asset cache directory was not created: {cache_dir}")
         if not os.path.isfile(params_cache_path):

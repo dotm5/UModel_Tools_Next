@@ -41,6 +41,7 @@ def _ignore_dev_dirs(directory: str, names: t.Iterable[str]) -> set[str]:
         "dist", "docs", "history", "reference", "scripts",
         "tests", "tests_blender", "tools",
         ".gitignore", "envi.png", "Envi_Wlbl.json",
+        "blender_path.txt",
         "package_work",
     }
     ignored: set[str] = set()
@@ -92,6 +93,7 @@ def create_distribution(dist_path: t.Optional[str]):
             )
             _DEV_EXCLUDE_FILES = (
                 ".gitignore",
+                "blender_path.txt",
                 "envi.png",
                 "Envi_Wlbl.json",
                 "last_import_params.json",

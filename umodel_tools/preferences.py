@@ -7,7 +7,6 @@ import bpy
 import bpy_extras.io_utils
 
 from . import PACKAGE_NAME
-from . import game_profiles
 from . import localization
 from .materials import rules as rule_module
 from . import missing_asset_report
@@ -19,51 +18,6 @@ def get_addon_preferences() -> 'UMODELTOOLS_AP_addon_preferences':
     :return: Addon preferences.
     """
     return bpy.context.preferences.addons[PACKAGE_NAME].preferences
-
-
-class UMODELTOOLS_PG_game_profile(bpy.types.PropertyGroup):
-    """Game profile settings
-    """
-
-    name: bpy.props.StringProperty(
-        name="Name",
-        description="Name of the profile"
-    )
-
-    game: bpy.props.EnumProperty(
-        name="Game",
-        description="Game of this profile",
-        items=game_profiles.SUPPORTED_GAMES,
-        default=0
-    )
-
-    umodel_export_dir: bpy.props.StringProperty(
-        name="UModel Export Directory",
-        description="Path to the UModel export directory with game assets",
-        subtype='DIR_PATH'
-    )
-
-    asset_dir: bpy.props.StringProperty(
-        name="Asset Directory",
-        description="Path to the directory where the assets for current project are stored",
-        subtype='DIR_PATH'
-    )
-
-
-class UMODELTOOLS_UL_game_profiles(bpy.types.UIList):
-    """UIlist for displaying game profiles."""
-
-    def draw_item(self,
-                  _context: bpy.types.Context,
-                  layout: bpy.types.UILayout,
-                  _prefs: 'UMODELTOOLS_AP_addon_preferences',
-                  game_profile: UMODELTOOLS_PG_game_profile,
-                  icon: str,
-                  _active_prefs: 'UMODELTOOLS_AP_addon_preferences',
-                  _active_propname: str,
-                  _index: int,
-                  _flt_flag: int):
-        layout.prop(game_profile, "name", text="", emboss=False, icon_value=icon)
 
 
 class UMODELTOOLS_PG_material_rule_dataset(bpy.types.PropertyGroup):
@@ -104,53 +58,6 @@ class UMODELTOOLS_UL_material_rule_datasets(bpy.types.UIList):
         row.prop(dataset, "enabled", text="")
         icon = 'CHECKMARK' if os.path.isfile(_normalize_rule_dataset_path(dataset.path)) else 'ERROR'
         row.prop(dataset, "name", text="", emboss=False, icon=icon)
-
-
-class UMODELTOOLS_OT_actions(bpy.types.Operator):
-    """Move items up and down, add and remove"""
-
-    bl_idname = "umodel_tools.list_action"
-    bl_label = "List Actions"
-    bl_description = "Move items up and down, add and remove"
-    bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
-
-    action: bpy.props.EnumProperty(
-        items=(
-            ('UP', "Up", ""),
-            ('DOWN', "Down", ""),
-            ('REMOVE', "Remove", ""),
-            ('ADD', "Add", "")
-        )
-    )
-
-    def invoke(self, _context: bpy.types.Context, _event: bpy.types.Event) -> set[str]:
-        addon_prefs = get_addon_preferences()
-        idx = addon_prefs.active_profile_index
-
-        try:
-            addon_prefs.profiles[idx]
-        except IndexError:
-            pass
-        else:
-            if self.action == 'DOWN' and idx < len(addon_prefs.profiles) - 1:
-                addon_prefs.profiles.move(idx, idx + 1)
-                addon_prefs.active_profile_index += 1
-
-            elif self.action == 'UP' and idx >= 1:
-                addon_prefs.profiles.move(idx, idx - 1)
-                addon_prefs.active_profile_index -= 1
-
-            elif self.action == 'REMOVE':
-                addon_prefs.profiles.remove(idx)
-                if addon_prefs.active_profile_index != 0:
-                    addon_prefs.active_profile_index -= 1
-
-        if self.action == 'ADD':
-            profile = addon_prefs.profiles.add()
-            profile.name = "New Profile"
-            addon_prefs.active_profile_index = len(addon_prefs.profiles) - 1
-
-        return {"FINISHED"}
 
 
 class UMODELTOOLS_OT_material_rule_dataset_actions(bpy.types.Operator):
@@ -212,7 +119,7 @@ class UMODELTOOLS_OT_add_material_rule_dataset(bpy.types.Operator, bpy_extras.io
 
     def execute(self, _context: bpy.types.Context) -> set[str]:
         if not self.filepath:
-            self.report({'ERROR'}, localization.t_report("Asset path was not provided."))
+            self.report({'ERROR'}, localization.t_report("Rule file path was not provided."))
             return {'CANCELLED'}
 
         addon_prefs = get_addon_preferences()
@@ -226,16 +133,6 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
     """
 
     bl_idname = PACKAGE_NAME
-
-    profiles: bpy.props.CollectionProperty(
-        name="Profiles",
-        description="Saved game profiles",
-        type=UMODELTOOLS_PG_game_profile
-    )
-
-    active_profile_index: bpy.props.IntProperty(
-        default=0
-    )
 
     material_rule_datasets: bpy.props.CollectionProperty(
         name="Material Rule Datasets",
@@ -253,32 +150,9 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         default=True
     )
 
-    display_cur_profile: bpy.props.BoolProperty(
-        name="Display current profile",
-        description="Display current profile on top of Blender's window",
-        default=True
-    )
-
     verbose: bpy.props.BoolProperty(
         name="Verbose import",
         description="Print detailed logging information on import",
-        default=False
-    )
-
-    default_import_storage_mode: bpy.props.EnumProperty(
-        name="Default Import Storage Mode",
-        description="Default storage behavior for Unreal Map imports",
-        items=[
-            ('LINKED_ASSET_LIBRARY', "Linked Asset Library", "Reuse cached asset blend files as linked libraries"),
-            ('LOCAL_SINGLE_FILE', "Local Single File", "Append imported assets as editable local datablocks"),
-            ('APPEND_AS_LOCAL', "Append Asset Library as Local", "Use the asset cache, then append assets locally")
-        ],
-        default='LINKED_ASSET_LIBRARY'
-    )
-
-    editable_materials_by_default: bpy.props.BoolProperty(
-        name="Editable Materials by Default",
-        description="Suggest Local Single File mode for new map imports",
         default=False
     )
 
@@ -499,12 +373,6 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         default=False
     )
 
-    def get_active_profile(self) -> t.Optional[UMODELTOOLS_PG_game_profile]:
-        try:
-            return self.profiles[self.active_profile_index]
-        except IndexError:
-            return None
-
     def ensure_material_rule_datasets(self) -> None:
         name, path = _copy_default_rule_dataset_to_user_dir()
         if len(self.material_rule_datasets):
@@ -555,10 +423,7 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
     def draw(self, context: bpy.types.Context):
         self.ensure_material_rule_datasets()
         layout = self.layout
-        layout.prop(self, "display_cur_profile")
         layout.prop(self, "verbose")
-        layout.prop(self, "default_import_storage_mode")
-        layout.prop(self, "editable_materials_by_default")
         layout.prop(self, "default_load_pbr_maps")
         layout.prop(self, "default_texture_format")
         layout.prop(self, "default_import_backface_culling")
@@ -613,30 +478,6 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
 
         if context.preferences.view.show_developer_ui:
             layout.prop(self, "debug")
-
-        layout.label(text=localization.t_iface("Game profiles:"))
-        row = layout.row()
-        row.template_list("UMODELTOOLS_UL_game_profiles", "", self, "profiles", self, "active_profile_index")
-
-        col = row.column(align=True)
-        col.operator(UMODELTOOLS_OT_actions.bl_idname, icon='ADD', text="").action = 'ADD'
-        col.operator(UMODELTOOLS_OT_actions.bl_idname, icon='REMOVE', text="").action = 'REMOVE'
-
-        col.separator()
-        col.operator(UMODELTOOLS_OT_actions.bl_idname, icon='TRIA_UP', text="").action = 'UP'
-        col.operator(UMODELTOOLS_OT_actions.bl_idname, icon='TRIA_DOWN', text="").action = 'DOWN'
-
-        try:
-            game_profile = self.profiles[self.active_profile_index]
-        except IndexError:
-            pass
-        else:
-            layout.separator()
-            layout.label(text=localization.t_iface("Profile settings:"))
-
-            layout.prop(game_profile, "game")
-            layout.prop(game_profile, "umodel_export_dir")
-            layout.prop(game_profile, "asset_dir")
 
     def _draw_material_rule_datasets(self, layout: bpy.types.UILayout) -> None:
         box = layout.box()

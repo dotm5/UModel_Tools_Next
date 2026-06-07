@@ -73,6 +73,8 @@ def parse_props_txt(props_txt_path: str,
                             parsed_value = _const_value(prop_value)
                         case 'TwoSided':
                             parsed_value = _const_value(prop_value).lower() == 'true'
+                        case 'ShadingModel':
+                            parsed_value = _const_value(prop_value)
                         case 'OpacityMaskClipValue':
                             parsed_value = float(_const_value(prop_value))
                         case _:

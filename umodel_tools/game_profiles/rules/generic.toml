@@ -16,34 +16,15 @@ to = "bsdf.Alpha"
 
 [[texture_rules]]
 name = "normal"
+node_groups = ["directx_normal_to_blender"]
 [texture_rules.match]
 param_names = ["n", "normal", "normal map", "normal texture", "normalmap", "tangent normal", "tangentnormal", "bump", "bump map"]
 suffixes = ["n", "normal", "normalmap", "bump"]
-[texture_rules.nodes]
-split = "ShaderNodeSeparateColor"
-invert_green = "ShaderNodeInvert"
-combine = "ShaderNodeCombineColor"
-normal_map = "ShaderNodeNormalMap"
 [[texture_rules.connections]]
 from = "image.Color"
-to = "split.Color"
+to = "directx_normal_to_blender.Color"
 [[texture_rules.connections]]
-from = "split.Red"
-to = "combine.Red"
-[[texture_rules.connections]]
-from = "split.Green"
-to = "invert_green.Color"
-[[texture_rules.connections]]
-from = "invert_green.Color"
-to = "combine.Green"
-[[texture_rules.connections]]
-from = "split.Blue"
-to = "combine.Blue"
-[[texture_rules.connections]]
-from = "combine.Color"
-to = "normal_map.Color"
-[[texture_rules.connections]]
-from = "normal_map.Normal"
+from = "directx_normal_to_blender.Normal"
 to = "bsdf.Normal"
 
 [[texture_rules]]

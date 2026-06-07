@@ -72,7 +72,7 @@ def main():
     _enable_source_addon()
     _enable_calabiyau_rules()
 
-    from umodel_tools import asset_importer, import_support, umodel_path_resolver  # pylint: disable=import-error,import-outside-toplevel
+    from umodel_tools import import_support, map_asset_cache, umodel_path_resolver  # pylint: disable=import-error,import-outside-toplevel
 
     try:
         if os.path.isdir(TEST_ROOT):
@@ -80,7 +80,7 @@ def main():
         os.makedirs(TEST_ROOT, exist_ok=True)
 
         importer = MaterialNodeImporter()
-        importer.__class__ = type("MaterialNodeImporter", (asset_importer.AssetImporter,), {})
+        importer.__class__ = type("MaterialNodeImporter", (map_asset_cache.MapAssetCache,), {})
         importer.load_pbr_maps = True
         importer.import_backface_culling = False
         importer.texture_format = ".png"

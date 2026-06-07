@@ -24,7 +24,6 @@ class MeshImportContext:
     source_filepath: str = ""
     asset_library_dir: str = ""
     umodel_export_dir: str = ""
-    import_storage_mode: str = ""
     game_profile: str = ""
     import_report: t.Any = None
     options: dict[str, t.Any] = dataclasses.field(default_factory=dict)

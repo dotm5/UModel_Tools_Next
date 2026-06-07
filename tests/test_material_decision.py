@@ -51,6 +51,7 @@ def main():
         raise AssertionError("compound suffix matching changed.")
 
     _test_generic_skip_when_rule_semantics(rule_module)
+    _test_toon_shading_model_detection()
 
     print("TEST_MATERIAL_DECISION_OK")
 
@@ -103,6 +104,15 @@ def _test_generic_skip_when_rule_semantics(rule_module):
     )
     if generic._should_skip_rule(absent_ctx, skip_matcap_rule):
         raise AssertionError("skip_when should not skip when the static switch is absent.")
+
+
+def _test_toon_shading_model_detection():
+    generic = _load_generic_profile_for_unit_test()
+
+    if not generic._is_toon_shading_model("MSM_Toon"):
+        raise AssertionError("MSM_Toon should enable the Toon normal fallback.")
+    if generic._is_toon_shading_model("MSM_DefaultLit"):
+        raise AssertionError("Non-Toon shading models should not enable the Toon normal fallback.")
 
 
 def _load_generic_profile_for_unit_test():

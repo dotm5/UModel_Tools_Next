@@ -8,8 +8,8 @@ import enum
 import mathutils as mu
 import bpy
 
-from . import asset_importer
 from . import import_support
+from . import map_asset_cache
 from . import utils
 from . import localization
 from . import missing_asset_report
@@ -407,7 +407,7 @@ class GameLight:
         return True
 
 
-class MapImporter(asset_importer.AssetImporter):
+class MapImporter(map_asset_cache.MapAssetCache):
     """Imports Unreal Engine map (FModel .json output). Assets are imported from UModel output directory.
     """
 
@@ -438,10 +438,6 @@ class MapImporter(asset_importer.AssetImporter):
             return False
 
         self._path_resolve_stats.reset()
-        self._import_stats.storage_mode = getattr(
-            self, "import_storage_mode", asset_importer.LINKED_ASSET_LIBRARY
-        )
-
         json_filename = utils.normalize_ue_name(os.path.basename(map_path), fallback="Imported_Map")
         map_name_no_ext = os.path.splitext(os.path.basename(map_path))[0]
         self._missing_asset_reporter = missing_asset_report.MissingAssetReporter(
@@ -534,7 +530,7 @@ class MapImporter(asset_importer.AssetImporter):
                                 continue
 
                             try:
-                                obj = self._load_asset(
+                                obj = self._load_map_asset(
                                     context=context,
                                     asset_dir=asset_dir,
                                     asset_path=static_mesh.asset_path,
@@ -543,7 +539,7 @@ class MapImporter(asset_importer.AssetImporter):
                                     db=db,
                                     game_profile=game_profile
                                 )
-                            except asset_importer.AssetImportPolicyError as exc:
+                            except map_asset_cache.AssetImportPolicyError as exc:
                                 print(f"Error: {exc}")
                                 import_failed = True
                                 break
@@ -733,7 +729,7 @@ class MapImporter(asset_importer.AssetImporter):
             return
 
         try:
-            obj = self._load_asset(
+            obj = self._load_map_asset(
                 context=context,
                 asset_dir=asset_dir,
                 asset_path=skeletal_mesh.asset_path,
@@ -742,7 +738,7 @@ class MapImporter(asset_importer.AssetImporter):
                 db=db,
                 game_profile=game_profile,
             )
-        except asset_importer.AssetImportPolicyError as exc:
+        except map_asset_cache.AssetImportPolicyError as exc:
             self._record_missing_asset(
                 resource_type="skeletal_mesh",
                 json_asset_path=skeletal_mesh.raw_object_path or skeletal_mesh.asset_path,
@@ -823,10 +819,6 @@ class MapImporter(asset_importer.AssetImporter):
             1 for obj in mesh_objects
             if obj.library is not None or (obj.data is not None and obj.data.library is not None)
         )
-        self._import_stats.local_object_count += sum(
-            1 for obj in mesh_objects
-            if obj.library is None and (obj.data is None or obj.data.library is None)
-        )
 
         materials = {}
         for obj in mesh_objects:
@@ -837,7 +829,6 @@ class MapImporter(asset_importer.AssetImporter):
                     materials[mat.as_pointer()] = mat
 
         self._import_stats.linked_material_count += sum(1 for mat in materials.values() if mat.library is not None)
-        self._import_stats.local_material_count += sum(1 for mat in materials.values() if mat.library is None)
 
     def _print_import_summary(self) -> None:
         print(f"Import storage summary: {self._import_stats.summary()}")

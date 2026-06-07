@@ -78,6 +78,8 @@ def _from_texture_dictionary(raw_data: dict[str, t.Any],
 
     if "TwoSided" in base_overrides:
         base_prop_overrides["TwoSided"] = bool(base_overrides["TwoSided"])
+    if "ShadingModel" in base_overrides:
+        base_prop_overrides["ShadingModel"] = str(base_overrides["ShadingModel"])
     if "OpacityMaskClipValue" in base_overrides:
         try:
             base_prop_overrides["OpacityMaskClipValue"] = float(base_overrides["OpacityMaskClipValue"])
@@ -123,7 +125,7 @@ def _from_fmodel_export_array(raw_data: list[t.Any],
     base_prop_overrides = {}
     raw_overrides = props.get("BasePropertyOverrides", {})
     if isinstance(raw_overrides, dict):
-        for key in ("BlendMode", "TwoSided", "OpacityMaskClipValue"):
+        for key in ("BlendMode", "TwoSided", "OpacityMaskClipValue", "ShadingModel"):
             if key in raw_overrides:
                 base_prop_overrides[key] = raw_overrides[key]
 

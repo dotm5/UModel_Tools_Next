@@ -1,5 +1,7 @@
 """This module implements a config-backed generic material profile."""
 
+from __future__ import annotations
+
 import typing as t
 import dataclasses
 import os
@@ -28,6 +30,7 @@ class MaterialContext:
     scalar_parameters: dict[str, float]
     vector_parameters: dict[str, props_txt_parser.Color]
     static_switch_parameters: dict[str, bool]
+    shading_model: str | None = None
     linked_maps: set[str] = dataclasses.field(default_factory=set)
 
 
@@ -37,11 +40,13 @@ _state_buffer: dict[bpy.types.Material, MaterialContext] = {}
 def process_material(mat: bpy.types.Material, desc_ast: t.Any, use_pbr: bool):  # pylint: disable=unused-argument
     if hasattr(desc_ast, "base_prop_overrides"):
         blend_mode = getattr(desc_ast, "blend_mode", None)
+        shading_model = _extract_description_shading_model(desc_ast)
         scalar_parameters = getattr(desc_ast, "scalar_parameters", {})
         vector_parameters = getattr(desc_ast, "vector_parameters", {})
         static_switch_parameters = getattr(desc_ast, "static_switch_parameters", {})
     else:
         blend_mode = _extract_blend_mode(desc_ast)
+        shading_model = _extract_shading_model(desc_ast)
         scalar_parameters = props_txt_parser.extract_scalar_parameters(desc_ast)
         vector_parameters = props_txt_parser.extract_vector_parameters(desc_ast)
         static_switch_parameters = props_txt_parser.extract_static_switch_parameters(desc_ast)
@@ -54,6 +59,7 @@ def process_material(mat: bpy.types.Material, desc_ast: t.Any, use_pbr: bool):  
         scalar_parameters=scalar_parameters,
         vector_parameters=vector_parameters,
         static_switch_parameters=static_switch_parameters,
+        shading_model=shading_model,
     )
 
 
@@ -86,6 +92,7 @@ def handle_material_texture_pbr(mat: bpy.types.Material,
 
     # do not connect the same texture purpose twice
     if rule.name in mat_ctx.linked_maps:
+        mat.node_tree.nodes.remove(img_node)
         return
 
     # remember that we processed a texture of that type
@@ -141,6 +148,7 @@ def end_process_material(mat: bpy.types.Material):
         utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Roughness'), 0.0)
         utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Sheen Tint'), 0.0)
         utils.set_socket_value(utils.get_bsdf_input(mat_ctx.bsdf_node, 'Clearcoat Roughness'), 0.0)
+        _link_toon_normal_fallback(mat, mat_ctx)
 
     del _state_buffer[mat]
 
@@ -186,10 +194,122 @@ def set_material_rule_path_override(rule_paths: t.Sequence[str] | None) -> None:
 
 
 def _create_rule_nodes(mat: bpy.types.Material, rule: rule_module.TextureRule) -> dict[str, bpy.types.Node]:
-    return {
+    nodes = {
         node_spec.name: mat.node_tree.nodes.new(node_spec.node_type)
         for node_spec in rule.nodes
     }
+    nodes.update({
+        group_name: _create_rule_node_group(mat, group_name)
+        for group_name in rule.node_groups
+    })
+    return nodes
+
+
+def _create_rule_node_group(mat: bpy.types.Material, group_name: str) -> bpy.types.Node:
+    if group_name == "directx_normal_to_blender":
+        group = _get_directx_normal_to_blender_group()
+    elif group_name == "matcap_emission_strength":
+        group = _get_matcap_emission_strength_group()
+    elif group_name == "toon_coordinate_normal":
+        group = _get_toon_coordinate_normal_group()
+    else:
+        raise RuntimeError(f"Unknown material rule node group {group_name!r}.")
+
+    node = mat.node_tree.nodes.new("ShaderNodeGroup")
+    node.node_tree = group
+    return node
+
+
+def _get_directx_normal_to_blender_group() -> bpy.types.NodeTree:
+    group_name = "UTM DirectX Normal To Blender"
+    existing = bpy.data.node_groups.get(group_name)
+    if existing is not None:
+        return existing
+
+    group = bpy.data.node_groups.new(group_name, "ShaderNodeTree")
+    _add_group_socket(group, "Color", "INPUT", "NodeSocketColor")
+    _add_group_socket(group, "Normal", "OUTPUT", "NodeSocketVector")
+
+    nodes = group.nodes
+    links = group.links
+    group_input = nodes.new("NodeGroupInput")
+    group_output = nodes.new("NodeGroupOutput")
+    split = nodes.new("ShaderNodeSeparateColor")
+    invert_green = nodes.new("ShaderNodeInvert")
+    combine = nodes.new("ShaderNodeCombineColor")
+    normal_map = nodes.new("ShaderNodeNormalMap")
+
+    group_input.location = (-700, 0)
+    split.location = (-500, 0)
+    invert_green.location = (-300, -80)
+    combine.location = (-120, 0)
+    normal_map.location = (80, 0)
+    group_output.location = (300, 0)
+
+    links.new(group_input.outputs["Color"], split.inputs["Color"])
+    links.new(split.outputs["Red"], combine.inputs["Red"])
+    links.new(split.outputs["Green"], invert_green.inputs["Color"])
+    links.new(invert_green.outputs["Color"], combine.inputs["Green"])
+    links.new(split.outputs["Blue"], combine.inputs["Blue"])
+    links.new(combine.outputs["Color"], normal_map.inputs["Color"])
+    links.new(normal_map.outputs["Normal"], group_output.inputs["Normal"])
+    return group
+
+
+def _get_matcap_emission_strength_group() -> bpy.types.NodeTree:
+    group_name = "UTM MatCap Emission Strength"
+    existing = bpy.data.node_groups.get(group_name)
+    if existing is not None:
+        return existing
+
+    group = bpy.data.node_groups.new(group_name, "ShaderNodeTree")
+    _add_group_socket(group, "Color", "INPUT", "NodeSocketColor")
+    _add_group_socket(group, "Value", "OUTPUT", "NodeSocketFloat")
+
+    nodes = group.nodes
+    links = group.links
+    group_input = nodes.new("NodeGroupInput")
+    group_output = nodes.new("NodeGroupOutput")
+    rgb_to_bw = nodes.new("ShaderNodeRGBToBW")
+
+    group_input.location = (-320, 0)
+    rgb_to_bw.location = (-100, 0)
+    group_output.location = (120, 0)
+
+    links.new(group_input.outputs["Color"], rgb_to_bw.inputs["Color"])
+    links.new(rgb_to_bw.outputs["Val"], group_output.inputs["Value"])
+    return group
+
+
+def _get_toon_coordinate_normal_group() -> bpy.types.NodeTree:
+    group_name = "UTM Toon Coordinate Normal"
+    existing = bpy.data.node_groups.get(group_name)
+    if existing is not None:
+        return existing
+
+    group = bpy.data.node_groups.new(group_name, "ShaderNodeTree")
+    _add_group_socket(group, "Normal", "OUTPUT", "NodeSocketVector")
+
+    nodes = group.nodes
+    links = group.links
+    texcoord = nodes.new("ShaderNodeTexCoord")
+    group_output = nodes.new("NodeGroupOutput")
+
+    texcoord.location = (-220, 0)
+    group_output.location = (0, 0)
+
+    links.new(texcoord.outputs["Normal"], group_output.inputs["Normal"])
+    return group
+
+
+def _add_group_socket(group: bpy.types.NodeTree, name: str, in_out: str, socket_type: str) -> None:
+    interface = getattr(group, "interface", None)
+    if interface is not None and hasattr(interface, "new_socket"):
+        interface.new_socket(name=name, in_out=in_out, socket_type=socket_type)
+        return
+
+    sockets = group.inputs if in_out == "INPUT" else group.outputs
+    sockets.new(socket_type, name)
 
 
 def _should_skip_connection(mat_ctx: MaterialContext,
@@ -299,6 +419,26 @@ def _material_uses_packed_diffuse_alpha_emission(mat_ctx: MaterialContext) -> bo
     return "e_level" in mat_ctx.scalar_parameters or "e_color" in mat_ctx.vector_parameters
 
 
+def _link_toon_normal_fallback(mat: bpy.types.Material, mat_ctx: MaterialContext) -> None:
+    if not _is_toon_shading_model(mat_ctx.shading_model):
+        return
+    if mat_ctx.bsdf_node is None:
+        return
+
+    normal_input = utils.get_bsdf_input(mat_ctx.bsdf_node, "Normal")
+    if normal_input is None or normal_input.is_linked:
+        return
+
+    toon_normal = _create_rule_node_group(mat, "toon_coordinate_normal")
+    mat.node_tree.links.new(toon_normal.outputs["Normal"], normal_input)
+
+
+def _is_toon_shading_model(shading_model: str | None) -> bool:
+    if shading_model is None:
+        return False
+    return rule_module._normalize_token(str(shading_model)) == "msm_toon"  # pylint: disable=protected-access
+
+
 def _extract_blend_mode(desc_ast: t.Any) -> str | None:
     for child in desc_ast.children:
         def_name, _, value = child.children
@@ -311,6 +451,26 @@ def _extract_blend_mode(desc_ast: t.Any) -> str | None:
                 return prop_value.children[0].value.strip()
 
     return None
+
+
+def _extract_shading_model(desc_ast: t.Any) -> str | None:
+    for child in desc_ast.children:
+        def_name, _, value = child.children
+        if def_name != "BasePropertyOverrides" or value.data != "structured_block":
+            continue
+
+        for prop_override_entry in value.children:
+            prop_name, _, prop_value = prop_override_entry.children
+            if prop_name == "ShadingModel":
+                return prop_value.children[0].value.strip()
+
+    return None
+
+
+def _extract_description_shading_model(desc: t.Any) -> str | None:
+    base_prop_overrides = getattr(desc, "base_prop_overrides", {})
+    value = base_prop_overrides.get("ShadingModel")
+    return str(value) if value is not None else None
 
 
 def _configure_image_color_space(img_node: bpy.types.ShaderNodeTexImage,

@@ -5,19 +5,20 @@
 # UModel Tools Next
 
 UModel Tools Next is dotm5's fork of the UModel Tools Blender add-on.
-It turns UModel and FModel exports into a more practical Blender map recovery pipeline, with stronger path matching, local single-file imports, and layered shader-rule reconstruction for packed Unreal texture patterns.
+It turns UModel and FModel map exports into a focused Blender scene recovery pipeline, with stronger path matching and layered shader-rule reconstruction for packed Unreal texture patterns.
 
 Repository: https://github.com/dotm5/UModel_Tools_Next
 
 ## Why This Fork
 
 - Recovers Unreal Engine map JSON exports into Blender scenes, including static mesh placement and reusable asset caches.
-- Matches assets across UModel/FModel-style export layouts, local single-file imports, and mixed path conventions.
+- Matches map assets across UModel/FModel-style export layouts and mixed path conventions.
 - Reconstructs common packed PBR material layouts, with optional creator rule datasets for game-specific texture names and channel packing.
 - Converts DirectX normal maps for Blender's OpenGL-style tangent space.
 - Applies shader hints for glass, water, emissive, foliage-like alpha, and other Unreal material patterns.
 - Produces missing-asset diagnostics so incomplete exports are easier to fix instead of silently failing.
 - Keeps packaging lean: only runtime site packages are bundled, while fork-maintained reference importers live inline.
+- Direct single-asset import and interactive AutoTex repair workflows are intentionally outside this add-on and can be split into a separate module later.
 
 ## Showcase
 
@@ -30,7 +31,7 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 - Map import from Unreal Engine JSON exports with static mesh placement.
 - Blender asset cache generation and reuse for repeated map recovery work.
 - UModel/FModel path inference for exports that do not share one exact directory shape.
-- PBR shader reconstruction from Unreal texture parameter patterns.
+- Map material reconstruction from Unreal material descriptors, FModel JSON, texture parameter patterns, and TOML rule datasets.
 - Packed mask support, DirectX normal conversion, glass/water hints, and packed diffuse alpha emission masks.
 - Missing-asset reports for diagnosing partial or inconsistent exports.
 

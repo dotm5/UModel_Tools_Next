@@ -48,9 +48,8 @@ def main():
     os.makedirs(TEST_ROOT, exist_ok=True)
     _enable_addon()
     try:
-        test_backend_registration_and_reference_import()
+        test_backend_registration_and_backend_only_reference_import()
         if os.path.isfile(REFERENCE_UEMODEL):
-            test_direct_import_operator()
             test_map_static_fallback()
         else:
             print("TEST_UEFORMAT_REFERENCE_SKIPPED missing reference project")
@@ -61,7 +60,7 @@ def main():
         _clean_test_root()
 
 
-def test_backend_registration_and_reference_import():
+def test_backend_registration_and_backend_only_reference_import():
     from umodel_tools.mesh_backends import backends  # pylint: disable=import-error,import-outside-toplevel
 
     invalid_path = os.path.join(TEST_ROOT, "synthetic_static.uemodel")
@@ -109,54 +108,6 @@ def test_backend_registration_and_reference_import():
     _clear_scene()
 
 
-def test_direct_import_operator():
-    direct_root = os.path.join(TEST_ROOT, "direct_import")
-    os.makedirs(direct_root, exist_ok=True)
-
-    result = bpy.ops.umodel_tools.import_ueformat_model(
-        filepath=REFERENCE_UEMODEL,
-        asset_path=os.path.relpath(REFERENCE_UEMODEL, REFERENCE_ROOT),
-        umodel_export_dir=REFERENCE_ROOT,
-        asset_cache_dir=direct_root,
-    )
-    if result != {"FINISHED"}:
-        raise AssertionError(f"Expected UEFormat direct import to finish, got {result!r}")
-
-    mesh_obj = _main_mesh_object()
-    _assert_kanami_mesh(mesh_obj, expect_shape_keys=True)
-    _assert_ueformat_asset_context(mesh_obj, direct_root)
-    if not all(material is not None for material in mesh_obj.data.materials):
-        raise AssertionError("Expected all Kanami material slots to be populated.")
-    if not any(material and material.node_tree is not None for material in mesh_obj.data.materials):
-        raise AssertionError("Expected imported Kanami materials to use node trees.")
-
-    armatures = [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]
-    if len(armatures) != 1 or len(armatures[0].data.bones) != 194:
-        raise AssertionError("Expected one 194-bone Kanami armature.")
-
-    expected_cache = os.path.join(
-        direct_root,
-        "PM",
-        "Content",
-        "PaperMan",
-        "SkinAssets",
-        "Characters",
-        "Kanami",
-        "S103",
-        "Mesh3D",
-        "Kanami_Mesh_103.blend",
-    )
-    if not os.path.isfile(expected_cache):
-        raise AssertionError(f"Expected asset cache file: {expected_cache}")
-
-    rebuild_result = bpy.ops.umodel_tools.rebuild_ueformat_asset_materials()
-    if rebuild_result != {"FINISHED"}:
-        raise AssertionError(f"Expected UEFormat material rebuild to finish, got {rebuild_result!r}")
-    if not all(material is not None for material in mesh_obj.data.materials):
-        raise AssertionError("Expected rebuilt Kanami material slots to stay populated.")
-    _clear_scene()
-
-
 def test_map_static_fallback():
     map_root = os.path.join(TEST_ROOT, "map_static_fallback")
     os.makedirs(map_root, exist_ok=True)
@@ -171,7 +122,6 @@ def test_map_static_fallback():
             umodel_export_dir=REFERENCE_ROOT,
             asset_cache_dir=os.path.join(map_root, "asset_cache"),
             game_profile="generic",
-            import_storage_mode="LINKED_ASSET_LIBRARY",
             missing_mesh_policy="WARN_SKIP",
             missing_material_policy="USE_PLACEHOLDER",
             missing_texture_policy="USE_PLACEHOLDER",
@@ -199,6 +149,8 @@ def test_map_static_fallback():
         raise AssertionError("Map static fallback should not import UEFormat morph targets.")
     if [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]:
         raise AssertionError("Map static fallback should not import UEFormat armatures.")
+    if "skipped_animation_count=0" not in output:
+        raise AssertionError(f"Static fallback map should not import animation data:\n{output}")
     _clear_scene()
 
 
@@ -228,35 +180,6 @@ def _assert_kanami_mesh(mesh_obj, expect_shape_keys):
         raise AssertionError("Expected Basis plus 96 Kanami shape keys.")
     if not expect_shape_keys and shape_keys is not None:
         raise AssertionError("Did not expect Kanami shape keys.")
-
-
-def _main_mesh_object():
-    for obj in bpy.context.scene.objects:
-        if obj.type == "MESH" and obj.get("umodel_tools_main_asset_object"):
-            return obj
-    raise AssertionError("Could not find imported UEFormat main mesh object.")
-
-
-def _assert_ueformat_asset_context(mesh_obj, asset_cache_dir):
-    from umodel_tools import panels  # pylint: disable=import-error,import-outside-toplevel
-
-    props = mesh_obj.umodel_tools_asset
-    if not props.enabled or not props.is_ueformat_asset:
-        raise AssertionError("Expected imported object to be marked as a UEFormat asset.")
-    if not props.ueformat_conflict_store_path.endswith("umodel_tools_conflict_overrides.json"):
-        raise AssertionError(f"Unexpected conflict store path: {props.ueformat_conflict_store_path!r}")
-    if not panels.UMODELTOOLS_PT_ueformat_asset_tools.poll(bpy.context):
-        raise AssertionError("Expected UEFormat N-panel to poll true for the imported asset.")
-
-    context_payload = json.loads(props.ueformat_context_json)
-    if context_payload["uemodel_asset_path"] != os.path.relpath(REFERENCE_UEMODEL, REFERENCE_ROOT):
-        raise AssertionError(f"Unexpected UEFormat asset path context: {context_payload!r}")
-    if os.path.normcase(context_payload["asset_cache_dir"]) != os.path.normcase(asset_cache_dir):
-        raise AssertionError(f"Unexpected asset cache dir in context: {context_payload!r}")
-    if context_payload["game_profile"] != "generic":
-        raise AssertionError(f"Unexpected game profile in context: {context_payload!r}")
-    if len(context_payload["material_slots"]) != 7:
-        raise AssertionError(f"Expected seven material slot descriptors, got {context_payload['material_slots']!r}")
 
 
 def _write_map(map_path):

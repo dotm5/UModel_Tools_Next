@@ -43,7 +43,6 @@ def main():
                 umodel_export_dir=UMODEL_EXPORT_DIR,
                 asset_cache_dir=ASSET_CACHE_DIR,
                 game_profile="generic",
-                import_storage_mode="LINKED_ASSET_LIBRARY",
                 path_inference_mode="BASIC_DEFAULT",
                 missing_mesh_policy="WARN_SKIP",
                 missing_material_policy="USE_PLACEHOLDER",

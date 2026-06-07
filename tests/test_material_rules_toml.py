@@ -79,6 +79,9 @@ def main():
     ]
 
     calabiyau_cases = [
+        ("PM_Diffuse", "T_Kanami_Body_103_D", "diffuse"),
+        ("PM_Normals", "T_HuiXing_Body02_N_S211", "normal"),
+        ("PM_SpecularMasks", "T_Weap_FAMAS_01_RMO_206", "rmo"),
         ("ORM", "T_Envi_Umeda_Cherrytree_Trunk_01_RMO", "rmo"),
         ("Blend_AO_R_M_MASK", "T_Envi_Fyz_Blend_AO_R_M_MASK", "orm"),
         ("RM", "T_Evni_Michele_melonpa_RMO", "rmo"),
@@ -92,6 +95,11 @@ def main():
         ("jingti_Map", "T_DefaultWhite_Gamma", "diffuse"),
         ("CloudTex", "T_Envi_Wlbl_Clouds_01", "diffuse"),
         ("Cloud Texture", "T_Envi_Wlbl_Clouds_01", "diffuse"),
+        ("Mask1", "T_Kanmami_Body_Mask1_Map", "mask1"),
+        ("Mask2", "T_Kanmami_Body_Mask2_Map", "mask2"),
+        ("MatCapTexture", "Materials1", "matcap"),
+        ("FaceShadowMask", "T_Kanami_SDF", "face_shadow"),
+        ("Emotion_04", "blush_2", "emotion_overlay"),
         ("Alpha", "T_Envi_Fyz_Wall_01a_M", "alpha_mask"),
         ("DissolveMap", "T_Noise_0009", "alpha_mask"),
         ("DissolveMask", "T_Mask_2000_2", "alpha_mask"),
@@ -118,6 +126,7 @@ def main():
         ("T_LEDTex", "T_Envi_Dirac_Decal_06g"),
         ("Mask1", "T_Kanmami_Body_Mask1_Map"),
         ("MatCapTexture", "MatCap_Toon9"),
+        ("PM_Normals", "T_HuiXing_Body02_N_S211"),
     ]
     for tex_type, tex_short_name in generic_negative_cases:
         rule = generic_rules.resolve(tex_type, tex_short_name)
@@ -130,16 +139,17 @@ def main():
     for tex_type, tex_short_name, expected_name in calabiyau_cases:
         _assert_resolves(calabiyau_rules, tex_type, tex_short_name, expected_name)
 
+    matcap_rule = calabiyau_rules.resolve("MatCapTexture", "Materials1")
+    if matcap_rule.node_groups != ("matcap_emission_strength",):
+        raise AssertionError(f"Calabiyau MatCap should use reusable emission strength group: {matcap_rule.node_groups!r}")
+
     normal_rule = generic_rules.resolve("N", "T_Example_N")
+    if normal_rule.node_groups != ("directx_normal_to_blender",):
+        raise AssertionError(f"Generic normal should use reusable DirectX normal group: {normal_rule.node_groups!r}")
     normal_connections = {(connection.source, connection.target) for connection in normal_rule.connections}
     expected_normal_connections = {
-        ("image.Color", "split.Color"),
-        ("split.Red", "combine.Red"),
-        ("split.Green", "invert_green.Color"),
-        ("invert_green.Color", "combine.Green"),
-        ("split.Blue", "combine.Blue"),
-        ("combine.Color", "normal_map.Color"),
-        ("normal_map.Normal", "bsdf.Normal"),
+        ("image.Color", "directx_normal_to_blender.Color"),
+        ("directx_normal_to_blender.Normal", "bsdf.Normal"),
     }
     if normal_connections != expected_normal_connections:
         raise AssertionError(f"Unexpected DirectX normal conversion graph: {normal_connections!r}")

@@ -5,7 +5,7 @@ description = "Creator preference rules for CalabiyauGame material texture names
 name = "diffuse"
 diffuse = true
 [texture_rules.match]
-param_names = ["basecolor_low", "blend base", "blendbase", "main texture", "main tex", "maintex", "maintexture", "surface tex", "surface texture", "surfacetex", "inside tex", "inside texture", "insidetex", "crystal content tex", "crystalcontenttex", "matcap tex", "matcaptex", "content texture", "contenttexture", "jingti map", "jingti_map", "cloud tex", "cloudtex", "cloud texture", "cloudtexture"]
+param_names = ["basecolor_low", "blend base", "blendbase", "pm_diffuse", "pm diffuse", "main texture", "main tex", "maintex", "maintexture", "surface tex", "surface texture", "surfacetex", "inside tex", "inside texture", "insidetex", "crystal content tex", "crystalcontenttex", "matcap tex", "matcaptex", "content texture", "contenttexture", "jingti map", "jingti_map", "cloud tex", "cloudtex", "cloud texture", "cloudtexture"]
 suffixes = ["d2"]
 [[texture_rules.connections]]
 from = "image.Color"
@@ -16,34 +16,15 @@ to = "bsdf.Alpha"
 
 [[texture_rules]]
 name = "normal"
+node_groups = ["directx_normal_to_blender"]
 [texture_rules.match]
-param_names = ["normalmapa", "normalmapb"]
+param_names = ["pm_normals", "pm normals", "normalmapa", "normalmapb"]
 suffixes = []
-[texture_rules.nodes]
-split = "ShaderNodeSeparateColor"
-invert_green = "ShaderNodeInvert"
-combine = "ShaderNodeCombineColor"
-normal_map = "ShaderNodeNormalMap"
 [[texture_rules.connections]]
 from = "image.Color"
-to = "split.Color"
+to = "directx_normal_to_blender.Color"
 [[texture_rules.connections]]
-from = "split.Red"
-to = "combine.Red"
-[[texture_rules.connections]]
-from = "split.Green"
-to = "invert_green.Color"
-[[texture_rules.connections]]
-from = "invert_green.Color"
-to = "combine.Green"
-[[texture_rules.connections]]
-from = "split.Blue"
-to = "combine.Blue"
-[[texture_rules.connections]]
-from = "combine.Color"
-to = "normal_map.Color"
-[[texture_rules.connections]]
-from = "normal_map.Normal"
+from = "directx_normal_to_blender.Normal"
 to = "bsdf.Normal"
 
 [[texture_rules]]
@@ -71,7 +52,7 @@ to = "split.Color"
 name = "rmo"
 prefer_suffix = true
 [texture_rules.match]
-param_names = ["rmo", "ao roughness metallic height", "aoroughnessmetallicheight", "roughness metallic occlusion", "roughnessmetallicocclusion", "roughness metalness occlusion", "roughnessmetalnessocclusion"]
+param_names = ["rmo", "pm_specularmasks", "pm specular masks", "ao roughness metallic height", "aoroughnessmetallicheight", "roughness metallic occlusion", "roughnessmetallicocclusion", "roughness metalness occlusion", "roughnessmetalnessocclusion"]
 suffixes = ["rmo", "roughnessmetallicocclusion"]
 [texture_rules.nodes]
 split = "ShaderNodeSeparateColor"
@@ -94,6 +75,113 @@ to = "output.Displacement"
 [[texture_rules.connections]]
 from = "image.Alpha"
 to = "displacement.Height"
+
+[[texture_rules]]
+name = "mask1"
+[texture_rules.match]
+param_names = ["mask1"]
+suffixes = ["mask1", "mask1_map", "body_mask1", "body_mask1_map", "hair_mask1", "hair_mask1_map", "face_mask1", "face_mask1_map"]
+[texture_rules.skip_when]
+NeedMask1 = false
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Green"
+to = "bsdf.Roughness"
+[[texture_rules.connections]]
+from = "split.Blue"
+to = "bsdf.Metallic"
+
+[[texture_rules]]
+name = "mask2"
+[texture_rules.match]
+param_names = ["mask2"]
+suffixes = ["mask2", "mask2_map", "body_mask2", "body_mask2_map", "hair_mask2", "hair_mask2_map", "face_mask2", "face_mask2_map"]
+[texture_rules.skip_when]
+NeedMask2 = false
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "ao_mix.Color2"
+
+[[texture_rules]]
+name = "matcap"
+node_groups = ["matcap_emission_strength"]
+[texture_rules.match]
+param_names = ["matcaptexture", "matcap texture", "materials1", "metallic2"]
+suffixes = ["matcap", "matcap_toon", "materials1", "metallic2"]
+[texture_rules.skip_when]
+NeedMatCap = false
+[texture_rules.nodes]
+emission = "ShaderNodeEmission"
+add_shader = "ShaderNodeAddShader"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "emission.Color"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "matcap_emission_strength.Color"
+[[texture_rules.connections]]
+from = "matcap_emission_strength.Value"
+to = "bsdf.Emission Strength"
+[[texture_rules.connections]]
+from = "bsdf.BSDF"
+to = "add_shader.Shader"
+[[texture_rules.connections]]
+from = "emission.Emission"
+to = "add_shader.Shader_001"
+[[texture_rules.connections]]
+from = "add_shader.Shader"
+to = "output.Surface"
+
+[[texture_rules]]
+name = "face_shadow"
+[texture_rules.match]
+param_names = ["faceshadowmask", "face shadow mask"]
+suffixes = ["sdf"]
+[texture_rules.nodes]
+split = "ShaderNodeSeparateColor"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "split.Color"
+[[texture_rules.connections]]
+from = "split.Red"
+to = "ao_mix.Color2"
+
+[[texture_rules]]
+name = "emotion_overlay"
+node_groups = ["matcap_emission_strength"]
+[texture_rules.match]
+param_names = ["emotion_01", "emotion_02", "emotion_03", "emotion_04"]
+suffixes = ["blush", "blush_2", "perspire", "tears"]
+[texture_rules.nodes]
+emission = "ShaderNodeEmission"
+add_shader = "ShaderNodeAddShader"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "emission.Color"
+[[texture_rules.connections]]
+from = "image.Color"
+to = "matcap_emission_strength.Color"
+[[texture_rules.connections]]
+from = "matcap_emission_strength.Value"
+to = "bsdf.Emission Strength"
+[[texture_rules.connections]]
+from = "bsdf.BSDF"
+to = "add_shader.Shader"
+[[texture_rules.connections]]
+from = "emission.Emission"
+to = "add_shader.Shader_001"
+[[texture_rules.connections]]
+from = "add_shader.Shader"
+to = "output.Surface"
 
 [[texture_rules]]
 name = "alpha_mask"

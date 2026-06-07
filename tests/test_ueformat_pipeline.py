@@ -125,6 +125,8 @@ def test_reference_fmodel_material_json():
         desc = fmodel_material_json.load_material_description(json_path)
         if not desc.texture_infos:
             raise AssertionError(f"Expected textures in {json_path}")
+        if "Kanami/S103/Mesh3D" in material_reference and desc.base_prop_overrides.get("ShadingModel") != "MSM_Toon":
+            raise AssertionError(f"Expected Toon shading model in {json_path}: {desc.base_prop_overrides!r}")
 
         for texture_reference in desc.texture_infos.values():
             if texture_reference.startswith("Engine"):

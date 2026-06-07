@@ -3,8 +3,12 @@ import os
 import sys
 import types
 
-import addon_utils
-import bpy
+try:
+    import addon_utils
+    import bpy
+except ModuleNotFoundError:
+    import pytest
+    pytest.skip("Blender-only test; run with blender --background --python", allow_module_level=True)
 
 
 ADDON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -70,7 +74,6 @@ def main():
             "filepath",
             "umodel_export_dir",
             "game_profile",
-            "import_storage_mode",
             "load_pbr_maps",
             "texture_format",
             "import_backface_culling",
@@ -99,39 +102,38 @@ def main():
         if missing:
             raise AssertionError(f"Import operator is missing properties: {missing!r}")
 
-        storage_items = [item.identifier for item in rna.properties["import_storage_mode"].enum_items]
-        expected_storage_items = ["LINKED_ASSET_LIBRARY", "LOCAL_SINGLE_FILE", "APPEND_AS_LOCAL"]
-        if storage_items != expected_storage_items:
-            raise AssertionError(f"Unexpected import storage items: {storage_items!r}")
+        removed_operator_ids = (
+            "recover_unreal_asset",
+            "import_unreal_assets",
+            "select_ueformat_model",
+            "import_ueformat_model",
+            "apply_ueformat_conflict_choice",
+            "rebuild_ueformat_asset_materials",
+            "realign_asset",
+        )
+        def operator_is_registered(operator_id):
+            try:
+                getattr(bpy.ops.umodel_tools, operator_id).get_rna_type()
+            except KeyError:
+                return False
+            return True
 
-        if operators.UMODELTOOLS_OT_import_ueformat_model.bl_label != "Import UEFormat Asset":
-            raise AssertionError("UEFormat import operator should be labelled Import UEFormat Asset.")
+        for operator_id in removed_operator_ids:
+            if operator_is_registered(operator_id):
+                raise AssertionError(f"Removed non-map operator is still registered: {operator_id}")
 
-        ueformat_selector_rna = bpy.ops.umodel_tools.select_ueformat_model.get_rna_type()
-        ueformat_selector_props = set(ueformat_selector_rna.properties.keys())
-        for required_selector_prop in ("filepath", "filter_glob"):
-            if required_selector_prop not in ueformat_selector_props:
-                raise AssertionError(f"UEFormat selector is missing {required_selector_prop!r}")
-
-        ueformat_rna = bpy.ops.umodel_tools.import_ueformat_model.get_rna_type()
-        ueformat_prop_names = set(ueformat_rna.properties.keys())
-        ueformat_required = {
-            "filepath",
-            "asset_path",
-            "umodel_export_dir",
-            "asset_cache_dir",
-            "game_profile",
-            "path_inference_mode",
-            "enable_umodel_path_inference",
-            "enable_suffix_index",
-            "use_preferences_material_rules",
-            "use_generic_material_rules",
-            "use_calabiyau_material_rules",
-            "use_wuthering_waves_material_rules",
-        }
-        ueformat_missing = sorted(ueformat_required - ueformat_prop_names)
-        if ueformat_missing:
-            raise AssertionError(f"UEFormat import operator is missing properties: {ueformat_missing!r}")
+        removed_operator_classes = (
+            "UMODELTOOLS_OT_recover_unreal_asset",
+            "UMODELTOOLS_OT_import_unreal_assets",
+            "UMODELTOOLS_OT_select_ueformat_model",
+            "UMODELTOOLS_OT_import_ueformat_model",
+            "UMODELTOOLS_OT_apply_ueformat_conflict_choice",
+            "UMODELTOOLS_OT_rebuild_ueformat_asset_materials",
+            "UMODELTOOLS_OT_realign_asset",
+        )
+        for class_name in removed_operator_classes:
+            if hasattr(operators, class_name):
+                raise AssertionError(f"Removed non-map operator class is still present: {class_name}")
 
         prefs = bpy.context.preferences.addons["umodel_tools"].preferences
         while len(prefs.material_rule_datasets):
@@ -166,7 +168,6 @@ def main():
             filepath=os.path.join(ADDON_ROOT, "sample_maps", "Envi_Wlbl.json"),
             umodel_export_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export"),
             game_profile="generic",
-            import_storage_mode="LINKED_ASSET_LIBRARY",
             load_pbr_maps=True,
             texture_format=".png",
             import_backface_culling=False,
@@ -203,7 +204,6 @@ def main():
         for required_draw_prop in (
             "umodel_export_dir",
             "game_profile",
-            "import_storage_mode",
             "load_pbr_maps",
             "texture_format",
             "path_inference_mode",
@@ -225,52 +225,14 @@ def main():
             if required_draw_prop not in drawn_props:
                 raise AssertionError(f"draw() did not expose {required_draw_prop!r}")
 
-        ueformat_fake = types.SimpleNamespace(
-            layout=FakeLayout(),
-            filepath=os.path.join(
-                ADDON_ROOT,
-                "tests",
-                "fixtures",
-                "sample_export",
-                "PM",
-                "Content",
-                "Model.uemodel",
-            ),
-            asset_path=os.path.join("PM", "Content", "Model.uemodel"),
-            umodel_export_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export"),
-            asset_cache_dir=os.path.join(ADDON_ROOT, "tests", "fixtures", "sample_export", "temp-assets"),
-            game_profile="generic",
-            path_inference_mode="BASIC_DEFAULT",
-            enable_umodel_path_inference=True,
-            enable_suffix_index=True,
-            use_preferences_material_rules=False,
-            use_generic_material_rules=True,
-            use_calabiyau_material_rules=True,
-            use_wuthering_waves_material_rules=False,
-        )
-        operators.UMODELTOOLS_OT_import_ueformat_model.draw(ueformat_fake, bpy.context)
-        ueformat_drawn_props = [call[1] for call in ueformat_fake.layout.calls if call[0] == "prop"]
-        for required_draw_prop in (
-            "asset_path",
-            "umodel_export_dir",
-            "asset_cache_dir",
-            "game_profile",
-            "path_inference_mode",
-            "enable_umodel_path_inference",
-            "enable_suffix_index",
-            "use_preferences_material_rules",
-            "use_generic_material_rules",
-            "use_calabiyau_material_rules",
-            "use_wuthering_waves_material_rules",
-        ):
-            if required_draw_prop not in ueformat_drawn_props:
-                raise AssertionError(f"UEFormat draw() did not expose {required_draw_prop!r}")
+        for removed_draw_prop in ("import_storage_mode",):
+            if removed_draw_prop in drawn_props:
+                raise AssertionError(f"Map-only UI still exposes removed property: {removed_draw_prop}")
 
         print(json.dumps({
             "operator_property_count": len(prop_names),
-            "storage_items": storage_items,
             "drawn_props": drawn_props,
-            "ueformat_drawn_props": ueformat_drawn_props,
+            "removed_operator_ids": removed_operator_ids,
         }, indent=2))
         print("TEST_IMPORT_OPERATOR_UI_OK")
     finally:
