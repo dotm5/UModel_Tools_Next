@@ -365,6 +365,121 @@ function Select-GameTag {
     }
 }
 
+function Resolve-TextureFormatArg {
+    param([string]$TextureFormat)
+
+    $format = if ($null -eq $TextureFormat) { "" } else { $TextureFormat.Trim().ToLowerInvariant() }
+    switch ($format) {
+        "png" { return "-png" }
+        "dds" { return "-dds" }
+        "tga" { return "" }
+        default { throw "Unsupported texture format: $TextureFormat. Use png, dds, or tga." }
+    }
+}
+
+function Load-ConfigFromJson {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Config JSON was not found: $Path"
+    }
+
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 32
+    $format = if ($raw.PSObject.Properties["TextureFormat"] -and -not [string]::IsNullOrWhiteSpace([string]$raw.TextureFormat)) {
+        [string]$raw.TextureFormat
+    } else {
+        "png"
+    }
+
+    return [pscustomobject]@{
+        UModelExe = [string]$raw.UModelExe
+        PakRoot = [string]$raw.PakRoot
+        JsonPath = [string]$raw.JsonPath
+        OutDir = [string]$raw.OutDir
+        AesKey = [string]$raw.AesKey
+        GameTag = [string]$raw.GameTag
+        TextureFormat = $format
+        TextureFormatArg = Resolve-TextureFormatArg $format
+        DryRun = [bool]$raw.DryRun
+        Overwrite = [bool]$raw.Overwrite
+        TryPathVariants = [bool]$raw.TryPathVariants
+    }
+}
+
+function Test-ExportConfig {
+    param([object]$Config)
+
+    if ([string]::IsNullOrWhiteSpace($Config.UModelExe) -or -not (Test-Path -LiteralPath $Config.UModelExe)) {
+        throw "UModel executable was not found: $($Config.UModelExe)"
+    }
+    if ([string]::IsNullOrWhiteSpace($Config.PakRoot) -or -not (Test-Path -LiteralPath $Config.PakRoot)) {
+        throw "Pak/root path was not found: $($Config.PakRoot)"
+    }
+    if ([string]::IsNullOrWhiteSpace($Config.JsonPath) -or -not (Test-Path -LiteralPath $Config.JsonPath)) {
+        throw "Material JSON was not found: $($Config.JsonPath)"
+    }
+    if ([string]::IsNullOrWhiteSpace($Config.GameTag)) {
+        throw "UModel game tag is required."
+    }
+    if ([string]::IsNullOrWhiteSpace($Config.OutDir)) {
+        throw "Output directory is required."
+    }
+
+    Resolve-TextureFormatArg $Config.TextureFormat | Out-Null
+    [System.IO.Directory]::CreateDirectory($Config.OutDir) | Out-Null
+}
+
+function New-UModelTextureExportConfig {
+    if (-not [string]::IsNullOrWhiteSpace($ConfigJson)) {
+        $config = Load-ConfigFromJson $ConfigJson
+        Test-ExportConfig $config
+        return $config
+    }
+
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+    $defaultUModel = Join-Path $repoRoot "tools\umodel_win32\umodel_acl_2.1.exe"
+
+    $umodelExe = Read-TextWithDefault "UModel executable" $defaultUModel -Required
+    if (-not (Test-Path -LiteralPath $umodelExe)) {
+        throw "UModel executable was not found: $umodelExe"
+    }
+
+    $tagText = & $umodelExe -taglist 2>&1 | Out-String
+    $tagItems = @(Parse-UModelTagList $tagText)
+    if ($tagItems.Count -eq 0) {
+        Write-Host "Could not parse UModel tag list. Manual input will be used." -ForegroundColor Yellow
+        $gameTag = Read-TextWithDefault "Manual -game tag" "" -Required
+    } else {
+        $gameTag = Select-GameTag $tagItems
+    }
+
+    $pakRoot = Read-TextWithDefault "Paks/root path for -path" "" -Required
+    $jsonPath = Read-TextWithDefault "Material JSON path" "" -Required
+    $outDir = Read-TextWithDefault "Output directory" (Join-Path ([Environment]::GetFolderPath("Desktop")) "UModelTextureExport") -Required
+    $aesKey = Read-TextWithDefault "AES key, blank for none" ""
+    $format = Read-TextWithDefault "Texture format: png, dds, or tga" "png" -Required
+    $dryRun = Read-YesNo "Dry run" $false
+    $overwrite = Read-YesNo "Overwrite existing files" $false
+    $tryPathVariants = Read-YesNo "Try common path variants" $true
+
+    $config = [pscustomobject]@{
+        UModelExe = $umodelExe
+        PakRoot = $pakRoot
+        JsonPath = $jsonPath
+        OutDir = $outDir
+        AesKey = $aesKey
+        GameTag = $gameTag
+        TextureFormat = $format
+        TextureFormatArg = Resolve-TextureFormatArg $format
+        DryRun = $dryRun
+        Overwrite = $overwrite
+        TryPathVariants = $tryPathVariants
+    }
+
+    Test-ExportConfig $config
+    return $config
+}
+
 function Invoke-SelfTest {
     Write-Host "SELFTEST: tag parser"
 
@@ -460,6 +575,44 @@ Unreal engine 4:
     Assert-Equal $filteredMenuItems[0].Tag "cal" "filter should preserve original order"
     Assert-Equal (@(Filter-GameTagItems $menuItems "q").Count) 0 "q should be treated as ordinary filter text"
     Assert-Equal (New-ManualGameTagItem).Tag "__manual__" "manual item should use sentinel tag"
+
+    Write-Host "SELFTEST: config loading"
+
+    $configRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("umodel-config-selftest-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
+    try {
+        $fakeUModel = Join-Path $configRoot "umodel.exe"
+        Set-Content -LiteralPath $fakeUModel -Value "fake" -Encoding UTF8
+        $pakRoot = Join-Path $configRoot "Paks"
+        New-Item -ItemType Directory -Force -Path $pakRoot | Out-Null
+        $jsonPath = Join-Path $configRoot "material.json"
+        Set-Content -LiteralPath $jsonPath -Value '{"Textures":{"BaseMap":"/Game/A/T_A.T_A"}}' -Encoding UTF8
+        $outDir = Join-Path $configRoot "Out"
+        $configPath = Join-Path $configRoot "config.json"
+
+        @{
+            UModelExe = $fakeUModel
+            PakRoot = $pakRoot
+            JsonPath = $jsonPath
+            OutDir = $outDir
+            AesKey = ""
+            GameTag = "cal"
+            TextureFormat = "png"
+            DryRun = $true
+            Overwrite = $false
+            TryPathVariants = $false
+        } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+
+        $config = Load-ConfigFromJson $configPath
+        Assert-Equal $config.GameTag "cal" "config should load game tag"
+        Assert-Equal $config.TextureFormatArg "-png" "png texture format should map to -png"
+        Assert-Equal $config.Overwrite $false "overwrite flag should load"
+        Test-ExportConfig $config
+        Assert-Equal (Test-Path -LiteralPath $outDir) $true "config validation should create output directory"
+        Assert-Equal (Resolve-TextureFormatArg "tga") "" "tga should use UModel default texture output"
+    } finally {
+        Remove-Item -LiteralPath $configRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     Write-Host "SELFTEST PASS"
 }
