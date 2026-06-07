@@ -206,3 +206,25 @@ last_import_params.json
 # Dev-only directories (never ship in the addon zip)
 /history/
 /reference/my real project/
+
+# Local AI assistant artifacts
+/.codex/
+/.claude/
+/.cursor/
+/.superpowers/
+/.continue/
+/.windsurf/
+/docs/superpowers/
+/prompts/
+/scratch/
+/ai_notes/
+*.prompt.md
+*_scratch.md
+conversation*.md
+chat*.md
+
+# Local machine paths and validation notes
+/blender_path.txt
+/reference/README.md
+/reference/MANIFEST.local.md
+/tests/runtime/README.md
