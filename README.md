@@ -5,9 +5,16 @@
 # UModel Tools Next
 
 UModel Tools Next is dotm5's fork of the UModel Tools Blender add-on.
-It turns UModel and FModel map exports into a focused Blender scene recovery pipeline, with stronger path matching and layered shader-rule reconstruction for packed Unreal texture patterns.
+It turns UModel and FModel map exports into a focused Blender scene recovery pipeline, with stronger path matching, layered shader-rule reconstruction for packed Unreal texture patterns, and automatic layout for generated shader node graphs.
 
 Repository: https://github.com/dotm5/UModel_Tools_Next
+
+## Compatibility
+
+UModel Tools Next requires Blender 5.1 or newer. The v1.4.0 release has been
+validated on Blender 5.2.0 LTS for add-on registration, material reconstruction,
+automatic node layout, and installation from the packaged ZIP with its bundled
+NetworkX runtime dependency.
 
 ## Why This Fork
 
@@ -35,6 +42,7 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 - Optional experimental skeletal map preview with PSK/PSKX armatures and one basic `AnimToPlay` PSA Action; morph targets, animation blueprints, montages, retargeting, and root motion remain out of scope.
 - UModel/FModel path inference for exports that do not share one exact directory shape.
 - Map material reconstruction from Unreal material descriptors, FModel JSON, texture parameter patterns, and TOML rule datasets.
+- Automatic Sugiyama-based layout for generated material node trees, adapted from Node Arrange through the vendored arrangebpy core while preserving the generated nodes and links.
 - Packed mask support, DirectX normal conversion, glass/water hints, and packed diffuse alpha emission masks.
 - Missing-asset reports for diagnosing partial or inconsistent exports.
 
