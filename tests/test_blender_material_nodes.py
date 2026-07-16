@@ -72,7 +72,13 @@ def main():
     _enable_source_addon()
     _enable_calabiyau_rules()
 
-    from umodel_tools import import_support, map_asset_cache, umodel_path_resolver  # pylint: disable=import-error,import-outside-toplevel
+    # pylint: disable=import-error,import-outside-toplevel
+    from umodel_tools import (
+        import_support,
+        map_asset_cache,
+        material_cache,
+        umodel_path_resolver,
+    )
 
     try:
         if os.path.isdir(TEST_ROOT):
@@ -204,6 +210,39 @@ def main():
         _assert_cloud_material(clouds_i)
         _assert_rmo_channel_mapping(rmo)
 
+        generated_materials = (
+            glass,
+            water,
+            water_02,
+            mouse,
+            desk,
+            chair,
+            keyboard,
+            screen,
+            clouds_h,
+            clouds_i,
+            rmo,
+        )
+        for material in generated_materials:
+            _assert_material_node_layout(material)
+            if material.get(material_cache.MATERIAL_CACHE_VERSION_KEY) != material_cache.MATERIAL_CACHE_VERSION:
+                raise AssertionError(f"{material.name} did not use the current material cache version.")
+
+        placeholder = material_cache._create_placeholder_pbr_material(  # pylint: disable=protected-access
+            "MissingMaterial",
+            material_cache.PLACEHOLDER_MATERIAL_UNRESOLVED,
+        )
+        try:
+            _assert_material_node_layout(placeholder)
+        finally:
+            bpy.data.materials.remove(placeholder, do_unlink=True)
+
+        rmo_x_positions = [node.location.x for node in rmo.node_tree.nodes]
+        print(
+            "TEST_MATERIAL_NODE_LAYOUT_OK "
+            f"material={rmo.name} nodes={len(rmo.node_tree.nodes)} "
+            f"links={len(rmo.node_tree.links)} x_span={max(rmo_x_positions) - min(rmo_x_positions):.1f}"
+        )
         print("TEST_BLENDER_MATERIAL_NODES_OK")
     finally:
         try:
@@ -333,6 +372,50 @@ def _assert_rmo_channel_mapping(material):
     displacement_link = output.inputs["Displacement"].links
     if not displacement_link or displacement_link[0].from_node.bl_idname != "ShaderNodeDisplacement":
         raise AssertionError(f"{material.name} RMO alpha should feed displacement height.")
+
+
+def _assert_material_node_layout(material):
+    # pylint: disable=import-error,import-outside-toplevel
+    from umodel_tools.vendor_inline.arrangebpy import utils as layout_utils
+
+    nodes = [node for node in material.node_tree.nodes if node.bl_idname != "NodeFrame"]
+    positions = {
+        node.name: (round(node.location.x, 3), round(node.location.y, 3))
+        for node in nodes
+    }
+    if len(set(positions.values())) != len(positions):
+        raise AssertionError(f"{material.name} keeps stacked node positions: {positions}")
+
+    reversed_links = [
+        (link.from_node.name, link.from_node.location.x, link.to_node.name, link.to_node.location.x)
+        for link in material.node_tree.links
+        if link.from_node.location.x >= link.to_node.location.x
+    ]
+    if reversed_links:
+        raise AssertionError(f"{material.name} has non-forward links after layout: {reversed_links}")
+
+    for index, node_a in enumerate(nodes):
+        dimensions_a = layout_utils.dimensions(node_a)
+        bounds_a = (
+            node_a.location.x,
+            node_a.location.x + dimensions_a.x,
+            node_a.location.y - dimensions_a.y,
+            node_a.location.y,
+        )
+        for node_b in nodes[index + 1:]:
+            dimensions_b = layout_utils.dimensions(node_b)
+            bounds_b = (
+                node_b.location.x,
+                node_b.location.x + dimensions_b.x,
+                node_b.location.y - dimensions_b.y,
+                node_b.location.y,
+            )
+            horizontal_overlap = max(bounds_a[0], bounds_b[0]) < min(bounds_a[1], bounds_b[1])
+            vertical_overlap = max(bounds_a[2], bounds_b[2]) < min(bounds_a[3], bounds_b[3])
+            if horizontal_overlap and vertical_overlap:
+                raise AssertionError(
+                    f"{material.name} nodes overlap: {node_a.name} {bounds_a}, {node_b.name} {bounds_b}"
+                )
 
 
 def _assert_screen_static_switches_respected(material):

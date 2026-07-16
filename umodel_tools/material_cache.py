@@ -10,10 +10,11 @@ from . import props_txt_parser
 from . import game_profiles
 from . import import_support
 from . import fmodel_material_json
+from . import material_node_layout
 from .materials import rules as rule_module
 
 
-MATERIAL_CACHE_VERSION = 8
+MATERIAL_CACHE_VERSION = 9
 MATERIAL_CACHE_VERSION_KEY = "umodel_tools_material_cache_version"
 
 PLACEHOLDER_MATERIAL_UNRESOLVED = "unresolved"
@@ -135,7 +136,7 @@ def _create_placeholder_pbr_material(material_name: str, status: str) -> bpy.typ
     status = _placeholder_pbr_status(status)
     color = _PLACEHOLDER_PBR_COLORS[status]
     new_mat = bpy.data.materials.new(_placeholder_pbr_name(material_name, status))
-    new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
+    new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION - 1
     new_mat.diffuse_color = color
     new_mat.use_nodes = True
     new_mat.node_tree.links.clear()
@@ -147,6 +148,8 @@ def _create_placeholder_pbr_material(material_name: str, status: str) -> bpy.typ
     _set_node_input_default(bsdf, 'Roughness', 0.5)
     _set_node_input_default(bsdf, 'Metallic', 0.0)
     new_mat.node_tree.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+    if material_node_layout.arrange_material_node_tree(new_mat.node_tree):
+        new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
     return new_mat
 
 
@@ -337,7 +340,7 @@ class MaterialCacheMixin:
                                                 ) -> None:
         material_name = utils.normalize_ue_name(material_name, fallback="Material")
         new_mat = bpy.data.materials.new(utils.normalize_ue_name(material_name, fallback="Material"))
-        new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
+        new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION - 1
         new_mat.asset_mark()
         new_mat.asset_data.catalog_id = db.uid_for_entry(material_path_local_no_ext)
         new_mat.use_nodes = True
@@ -535,6 +538,9 @@ class MaterialCacheMixin:
         finally:
             if rule_paths_override is not None and hasattr(game_profile_impl, "set_material_rule_path_override"):
                 game_profile_impl.set_material_rule_path_override(None)
+
+        if material_node_layout.arrange_material_node_tree(new_mat.node_tree):
+            new_mat[MATERIAL_CACHE_VERSION_KEY] = MATERIAL_CACHE_VERSION
 
         # new_mat.asset_generate_preview()
 

@@ -43,6 +43,10 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 The distributed Blender add-on keeps only runtime site packages in `umodel_tools/third_party`.
 Reference importer code that is part of this fork, such as the PSK/PSKX importer integration, lives inline under `umodel_tools` so the vendored dependency folder does not grow into a mixed plugin dump.
 Built-in material rule datasets use TOML only and are parsed with Python's standard-library `tomllib`.
+Generated material node trees are arranged with the vendored arrangebpy Sugiyama
+core; packaged builds include NetworkX as its runtime graph dependency.
+Build distributable copies without `--noreq` unless `umodel_tools/third_party`
+has already been populated from `requirements.txt`.
 
 ## Material Rule Example
 
