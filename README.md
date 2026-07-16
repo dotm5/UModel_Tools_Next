@@ -32,6 +32,7 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 - FModel-style World/Level/Actor/component reference traversal with template and parent-transform fallbacks.
 - Engine BasicShapes recovery from exported meshes, with dependency-free procedural previews when those meshes are absent.
 - Blender asset cache generation and reuse for repeated map recovery work.
+- Optional experimental skeletal map preview with PSK/PSKX armatures and one basic `AnimToPlay` PSA Action; morph targets, animation blueprints, montages, retargeting, and root motion remain out of scope.
 - UModel/FModel path inference for exports that do not share one exact directory shape.
 - Map material reconstruction from Unreal material descriptors, FModel JSON, texture parameter patterns, and TOML rule datasets.
 - Packed mask support, DirectX normal conversion, glass/water hints, and packed diffuse alpha emission masks.

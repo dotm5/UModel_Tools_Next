@@ -17,6 +17,7 @@ from . import world_environment
 from . import map_support
 from . import map_scene_graph
 from . import progress
+from . import psa_importer
 
 from .map_support import InstanceTransform, StaticMesh, get_reference_transform_matrix
 
@@ -36,6 +37,21 @@ def _classify_non_map_asset(entity_type: str) -> str:
     if entity_type in _ARMATURE_ENTITY_TYPES or "armature" in lowered or "skeleton" in lowered:
         return "armature"
     return ""
+
+
+def _as_static_mesh_reference(reference: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Adapt a SkeletalMesh reference for the shared StaticMesh transform/path wrapper."""
+
+    adapted = dict(reference)
+    object_name = adapted.get("ObjectName")
+    if isinstance(object_name, str) and object_name.startswith("SkeletalMesh'"):
+        adapted["ObjectName"] = "StaticMesh'" + object_name[len("SkeletalMesh'"):]
+    elif not object_name:
+        object_path = map_support.split_object_path(str(adapted.get("ObjectPath", "")))
+        asset_name = os.path.basename(os.path.normpath(object_path))
+        if asset_name:
+            adapted["ObjectName"] = f"StaticMesh'{asset_name}'"
+    return adapted
 
 
 def create_light_data(name: t.Any, ue_light_type: str) -> bpy.types.Light | None:
@@ -631,18 +647,33 @@ class MapImporter(map_asset_cache.MapAssetCache):
                         else:
                             resource_type = _classify_non_map_asset(entity_type)
                             if resource_type == "skeletal_mesh":
-                                self._import_skeletal_mesh_static_fallback(
-                                    context=context,
-                                    json_object=json_object,
-                                    entity=entity,
-                                    entity_type=entity_type,
-                                    import_collection=import_collection,
-                                    asset_dir=asset_dir,
-                                    umodel_export_dir=umodel_export_dir,
-                                    db=db,
-                                    game_profile=game_profile,
-                                    scene_graph=scene_graph,
-                                )
+                                rigged_imported = False
+                                if getattr(self, "import_skeletal_mesh_with_armature", False):
+                                    rigged_imported = self._import_skeletal_mesh_rigged_preview(
+                                        context=context,
+                                        json_object=json_object,
+                                        entity=entity,
+                                        entity_type=entity_type,
+                                        import_collection=import_collection,
+                                        asset_dir=asset_dir,
+                                        umodel_export_dir=umodel_export_dir,
+                                        db=db,
+                                        game_profile=game_profile,
+                                        scene_graph=scene_graph,
+                                    )
+                                if not rigged_imported:
+                                    self._import_skeletal_mesh_static_fallback(
+                                        context=context,
+                                        json_object=json_object,
+                                        entity=entity,
+                                        entity_type=entity_type,
+                                        import_collection=import_collection,
+                                        asset_dir=asset_dir,
+                                        umodel_export_dir=umodel_export_dir,
+                                        db=db,
+                                        game_profile=game_profile,
+                                        scene_graph=scene_graph,
+                                    )
                             elif resource_type:
                                 self._record_non_map_asset_skip(entity, entity_type)
 
@@ -721,6 +752,181 @@ class MapImporter(map_asset_cache.MapAssetCache):
             resolution_status="unsupported",
         )
 
+    def _import_skeletal_mesh_rigged_preview(
+        self,
+        context: bpy.types.Context,
+        json_object: t.Any,
+        entity: t.Any,
+        entity_type: str,
+        import_collection: bpy.types.Collection,
+        asset_dir: str,
+        umodel_export_dir: str,
+        db: import_support.AssetDB,
+        game_profile: str,
+        scene_graph: map_scene_graph.FModelSceneGraph,
+    ) -> bool:
+        """Try the opt-in local mesh+armature preview path for one skeletal component."""
+
+        props = entity.get("Properties", {}) or {}
+        skeletal_mesh_ref = props.get("SkeletalMesh")
+        if not isinstance(skeletal_mesh_ref, dict) or not skeletal_mesh_ref.get("ObjectPath"):
+            return False
+
+        static_entity = dict(entity)
+        static_props = dict(props)
+        static_props["StaticMesh"] = _as_static_mesh_reference(skeletal_mesh_ref)
+        static_entity["Properties"] = static_props
+        skeletal_mesh = StaticMesh(
+            json_object,
+            static_entity,
+            "StaticMeshComponent",
+            scene_graph=scene_graph,
+        )
+        if skeletal_mesh.invalid:
+            return False
+
+        self._set_missing_asset_context(
+            actor_name=entity.get("Name", entity.get("Outer", "")),
+            actor_object_path=entity.get("ObjectPath", ""),
+            component_name=entity_type,
+            component_object_path=skeletal_mesh.raw_object_path,
+            instance_index="",
+        )
+
+        try:
+            instance = self._load_map_skeletal_asset(
+                context=context,
+                asset_dir=asset_dir,
+                asset_path=skeletal_mesh.asset_path,
+                umodel_export_dir=umodel_export_dir,
+                game_profile=game_profile,
+                db=db,
+            )
+        except (map_asset_cache.AssetImportPolicyError, RuntimeError) as exc:
+            self._warn_print(
+                f'Warning: Rigged preview failed for "{skeletal_mesh.asset_path}"; '
+                f"using the existing static fallback instead: {exc}"
+            )
+            return False
+
+        if instance is None:
+            return False
+
+        for imported_object in instance.objects:
+            import_collection.objects.link(imported_object)
+
+        root_matrix = skeletal_mesh.transform.matrix_4x4
+        if skeletal_mesh.parent_mtx is not None:
+            root_matrix = skeletal_mesh.parent_mtx @ root_matrix
+        instance.armature_object.matrix_world = root_matrix
+
+        for imported_object in instance.objects:
+            imported_object["umodel_tools_preview_fallback"] = "rigged_skeletal_preview"
+            imported_object["umodel_tools_unreal_asset_path"] = skeletal_mesh.raw_object_path
+        instance.armature_object["umodel_tools_skeletal_cache"] = instance.source_library_path
+
+        self._import_stats.imported_instance_count += 1
+        self._import_stats.rigged_skeletal_mesh_count += 1
+        self._import_stats.imported_armature_count += 1
+
+        if self._skeletal_component_has_animation(props):
+            if getattr(self, "import_psa_animations", False):
+                self._import_basic_psa_animation(
+                    entity=entity,
+                    entity_type=entity_type,
+                    armature_object=instance.armature_object,
+                    umodel_export_dir=umodel_export_dir,
+                )
+            else:
+                self._record_embedded_non_static_data_skip(
+                    entity=entity,
+                    entity_type=entity_type,
+                    resource_type="animation",
+                    fallback_used="skipped",
+                    message=(
+                        "Skipping component animation because basic PSA preview is disabled; "
+                        "the armature was imported in bind pose."
+                    ),
+                )
+
+        return True
+
+    def _import_basic_psa_animation(
+        self,
+        entity: t.Any,
+        entity_type: str,
+        armature_object: bpy.types.Object,
+        umodel_export_dir: str,
+    ) -> bool:
+        """Resolve AnimToPlay and assign the first matching PSA sequence to an armature."""
+
+        props = entity.get("Properties", {}) or {}
+        animation_data = props.get("AnimationData")
+        animation_ref = animation_data.get("AnimToPlay") if isinstance(animation_data, dict) else None
+        object_path = animation_ref.get("ObjectPath", "") if isinstance(animation_ref, dict) else ""
+        if not object_path:
+            self._record_embedded_non_static_data_skip(
+                entity=entity,
+                entity_type=entity_type,
+                resource_type="animation",
+                fallback_used="skipped",
+                message="Basic PSA preview requires AnimationData.AnimToPlay.ObjectPath; using bind pose.",
+            )
+            return False
+
+        psa_asset_path = map_support.split_object_path(object_path)
+        psa_asset_path = os.path.normpath(psa_asset_path)
+        if psa_asset_path.startswith(os.sep):
+            psa_asset_path = psa_asset_path[1:]
+        resolved = self._resolve_umodel_path(
+            umodel_export_dir=umodel_export_dir,
+            asset_path=psa_asset_path,
+            extensions=(".psa",),
+        )
+        if not resolved.found or resolved.path is None:
+            self._import_stats.skipped_animation_count += 1
+            self._record_missing_asset(
+                resource_type="animation",
+                json_asset_path=object_path,
+                message=f'PSA animation "{psa_asset_path}" was not found; using bind pose.',
+                fallback_used="skipped",
+                resolution=resolved,
+                component_name=entity_type,
+            )
+            return False
+
+        preferred_sequence_name = os.path.basename(psa_asset_path)
+        try:
+            result = psa_importer.import_psa_action(
+                filepath=resolved.path,
+                armature_object=armature_object,
+                preferred_sequence_name=preferred_sequence_name,
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            self._import_stats.skipped_animation_count += 1
+            self._record_missing_asset(
+                resource_type="animation",
+                json_asset_path=object_path,
+                message=f"Basic PSA animation import failed; using bind pose: {exc}",
+                fallback_used="skipped",
+                resolution=resolved,
+                component_name=entity_type,
+            )
+            return False
+
+        if result.missing_bone_names:
+            self._warn_print(
+                f'Warning: PSA "{result.sequence.name}" did not match '
+                f"{len(result.missing_bone_names)} armature bone(s)."
+            )
+        self._import_stats.imported_animation_count += 1
+        print(
+            f'Basic PSA preview imported: "{result.sequence.name}", '
+            f"frames={result.sequence.frame_count}, fps={result.sequence.fps:g}, "
+            f"matched_bones={result.matched_bone_count}, fcurves={result.fcurve_count}"
+        )
+        return True
+
     def _import_skeletal_mesh_static_fallback(
         self,
         context: bpy.types.Context,
@@ -755,7 +961,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
 
         static_entity = dict(entity)
         static_props = dict(props)
-        static_props["StaticMesh"] = skeletal_mesh_ref
+        static_props["StaticMesh"] = _as_static_mesh_reference(skeletal_mesh_ref)
         static_entity["Properties"] = static_props
 
         skeletal_mesh = StaticMesh(
@@ -872,10 +1078,12 @@ class MapImporter(map_asset_cache.MapAssetCache):
 
     def _update_storage_counts(self, collection: bpy.types.Collection) -> None:
         mesh_objects = [obj for obj in collection.objects if obj.type == "MESH"]
-        self._import_stats.linked_object_count += sum(
+        linked_object_count = sum(
             1 for obj in mesh_objects
             if obj.library is not None or (obj.data is not None and obj.data.library is not None)
         )
+        self._import_stats.linked_object_count += linked_object_count
+        self._import_stats.local_object_count += len(mesh_objects) - linked_object_count
 
         materials = {}
         for obj in mesh_objects:
@@ -885,7 +1093,9 @@ class MapImporter(map_asset_cache.MapAssetCache):
                 if mat is not None:
                     materials[mat.as_pointer()] = mat
 
-        self._import_stats.linked_material_count += sum(1 for mat in materials.values() if mat.library is not None)
+        linked_material_count = sum(1 for mat in materials.values() if mat.library is not None)
+        self._import_stats.linked_material_count += linked_material_count
+        self._import_stats.local_material_count += len(materials) - linked_material_count
 
     def _print_import_summary(self) -> None:
         print(f"Import storage summary: {self._import_stats.summary()}")

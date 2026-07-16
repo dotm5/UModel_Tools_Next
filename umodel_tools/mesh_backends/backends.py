@@ -65,8 +65,8 @@ class PskMeshBackend(MeshImportBackend):
     supported_extensions = (".pskx", ".psk")
     priority = 100
     supports_static_mesh = True
-    supports_skeletal_mesh = False
-    supports_armature = False
+    supports_skeletal_mesh = True
+    supports_armature = True
     supports_morph_targets = False
     supports_animation = False
 
@@ -87,19 +87,21 @@ class PskMeshBackend(MeshImportBackend):
 
         from .. import psk_importer  # Imported lazily to keep backend registry importable without bpy.
 
+        import_skeleton = bool((context.options or {}).get("import_skeleton", False))
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
             imported = psk_importer.import_psk_mesh(
                 filepath=filepath,
                 context=blender_context,
-                import_bones=False,
+                import_bones=import_skeleton,
             )
 
-        main_object = getattr(blender_context, "object", None)
         scene_objects = getattr(getattr(blender_context, "scene", None), "objects", ())
         objects = [obj for obj in scene_objects if obj not in before_objects]
-        if main_object is not None and main_object not in objects:
-            objects.append(main_object)
+        main_object = next((obj for obj in objects if getattr(obj, "type", "") == "MESH"), None)
+        active_object = getattr(blender_context, "object", None)
+        if active_object is not None and active_object not in objects:
+            objects.append(active_object)
 
         if not imported or main_object is None:
             return MeshImportResult(
@@ -112,6 +114,8 @@ class PskMeshBackend(MeshImportBackend):
                 metadata={"importer_output": captured_stdout.getvalue()},
             )
 
+        main_object[MAIN_ASSET_OBJECT_KEY] = True
+        armature_object = next((obj for obj in objects if getattr(obj, "type", "") == "ARMATURE"), None)
         return MeshImportResult(
             status=IMPORTED,
             objects=objects,
@@ -122,6 +126,8 @@ class PskMeshBackend(MeshImportBackend):
             metadata={
                 "animated_material_layout": filepath.lower().endswith(".psk"),
                 "importer_output": captured_stdout.getvalue(),
+                "bone_count": len(armature_object.data.bones) if armature_object is not None else 0,
+                "armature_object_name": armature_object.name if armature_object is not None else "",
             },
         )
 

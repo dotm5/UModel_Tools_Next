@@ -77,6 +77,8 @@ def main():
             "load_pbr_maps",
             "texture_format",
             "import_backface_culling",
+            "import_skeletal_mesh_with_armature",
+            "import_psa_animations",
             "path_inference_mode",
             "missing_mesh_policy",
             "missing_material_policy",
@@ -101,6 +103,9 @@ def main():
         missing = sorted(required - prop_names)
         if missing:
             raise AssertionError(f"Import operator is missing properties: {missing!r}")
+        for opt_in_property in ("import_skeletal_mesh_with_armature", "import_psa_animations"):
+            if rna.properties[opt_in_property].default is not False:
+                raise AssertionError(f"Experimental option must default off: {opt_in_property}")
 
         removed_operator_ids = (
             "recover_unreal_asset",
@@ -136,6 +141,12 @@ def main():
                 raise AssertionError(f"Removed non-map operator class is still present: {class_name}")
 
         prefs = bpy.context.preferences.addons["umodel_tools"].preferences
+        for preference_name in (
+            "default_import_skeletal_mesh_with_armature",
+            "default_import_psa_animations",
+        ):
+            if prefs.bl_rna.properties[preference_name].default is not False:
+                raise AssertionError(f"Experimental preference must default off: {preference_name}")
         while len(prefs.material_rule_datasets):
             prefs.material_rule_datasets.remove(0)
         prefs.ensure_material_rule_datasets()
@@ -171,6 +182,9 @@ def main():
             load_pbr_maps=True,
             texture_format=".png",
             import_backface_culling=False,
+            import_skeletal_mesh_as_static_fallback=True,
+            import_skeletal_mesh_with_armature=False,
+            import_psa_animations=False,
             path_inference_mode="BASIC_DEFAULT",
             missing_mesh_policy="WARN_SKIP",
             missing_material_policy="USE_PLACEHOLDER",
@@ -215,6 +229,9 @@ def main():
             "enable_suffix_index",
             "report_path_resolution_stats",
             "import_backface_culling",
+            "import_skeletal_mesh_as_static_fallback",
+            "import_skeletal_mesh_with_armature",
+            "import_psa_animations",
             "save_missing_asset_report",
             "missing_asset_report_format",
             "max_missing_assets_printed_to_console",

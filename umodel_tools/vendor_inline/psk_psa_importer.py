@@ -1179,25 +1179,31 @@ def pskimport(filepath,
 
     if bImportbone:
 
-        bone_group_unused = armature_obj.pose.bone_groups.new(name = "Unused bones")
-        bone_group_unused.color_set = 'THEME14'
+        # Pose bone groups were removed from Blender 4.0. They were only used
+        # for viewport coloring, so skip this cosmetic block on current Blender
+        # versions while retaining it for older compatible runtimes.
+        pose_bone_groups = getattr(armature_obj.pose, "bone_groups", None)
+        if pose_bone_groups is not None:
+            bone_group_unused = pose_bone_groups.new(name = "Unused bones")
+            bone_group_unused.color_set = 'THEME14'
 
-        bone_group_nochild = armature_obj.pose.bone_groups.new(name = "No children")
-        bone_group_nochild.color_set = 'THEME03'
+            bone_group_nochild = pose_bone_groups.new(name = "No children")
+            bone_group_nochild.color_set = 'THEME03'
 
-        armature_data.show_group_colors = True
+            if hasattr(armature_data, "show_group_colors"):
+                armature_data.show_group_colors = True
 
-        for psk_bone in psk_bones:
+            for psk_bone in psk_bones:
 
-            pose_bone = armature_obj.pose.bones[psk_bone.name]
+                pose_bone = armature_obj.pose.bones[psk_bone.name]
 
-            if psk_bone.have_weight_data:
+                if psk_bone.have_weight_data:
 
-                if len(psk_bone.children) == 0:
-                    pose_bone.bone_group = bone_group_nochild
+                    if len(psk_bone.children) == 0:
+                        pose_bone.bone_group = bone_group_nochild
 
-            else:
-                pose_bone.bone_group = bone_group_unused
+                else:
+                    pose_bone.bone_group = bone_group_unused
 
 
     #===================================================================================================

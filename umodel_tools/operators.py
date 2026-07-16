@@ -32,6 +32,8 @@ _IMPORT_PARAM_CACHE_FIELDS = (
     "texture_format",
     "import_backface_culling",
     "import_skeletal_mesh_as_static_fallback",
+    "import_skeletal_mesh_with_armature",
+    "import_psa_animations",
     "path_inference_mode",
     "missing_mesh_policy",
     "missing_material_policy",
@@ -288,6 +290,24 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
         default=True
     )
 
+    import_skeletal_mesh_with_armature: bpy.props.BoolProperty(
+        name="Import Skeletal Mesh Armatures (Experimental)",
+        description=(
+            "Append local mesh and armature objects for SkeletalMeshComponent entries; "
+            "morph targets remain disabled and failures use the normal static fallback"
+        ),
+        default=False
+    )
+
+    import_psa_animations: bpy.props.BoolProperty(
+        name="Import Basic PSA Animation (Experimental)",
+        description=(
+            "Load one AnimationData.AnimToPlay PSA sequence onto each imported armature; "
+            "does not support animation blueprints, montages, retargeting, or root motion"
+        ),
+        default=False
+    )
+
     min_mesh_count: bpy.props.IntProperty(
         name="Min Mesh Count",
         description="Minimum mesh object count required by Custom validation",
@@ -444,6 +464,10 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
         box.prop(self, "report_path_resolution_stats")
         box.prop(self, "import_backface_culling")
         box.prop(self, "import_skeletal_mesh_as_static_fallback")
+        box.prop(self, "import_skeletal_mesh_with_armature")
+        animation_col = box.column()
+        animation_col.enabled = self.import_skeletal_mesh_with_armature
+        animation_col.prop(self, "import_psa_animations")
         box.prop(self, "enable_import_validation")
         box.prop(self, "min_mesh_count")
         box.prop(self, "min_light_count")
@@ -559,6 +583,10 @@ class UMODELTOOLS_OT_import_unreal_map(map_importer.MapImporter, bpy.types.Opera
             "import_skeletal_mesh_as_static_fallback": getattr(
                 prefs, "default_import_skeletal_mesh_as_static_fallback", True
             ),
+            "import_skeletal_mesh_with_armature": getattr(
+                prefs, "default_import_skeletal_mesh_with_armature", False
+            ),
+            "import_psa_animations": getattr(prefs, "default_import_psa_animations", False),
             "texture_format": getattr(prefs, "default_texture_format", ".png"),
             "path_inference_mode": getattr(prefs, "path_inference_mode", umodel_path_resolver.BASIC_DEFAULT),
             "enable_umodel_path_inference": getattr(prefs, "enable_umodel_path_inference", True),

@@ -177,6 +177,21 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         default=True
     )
 
+    default_import_skeletal_mesh_with_armature: bpy.props.BoolProperty(
+        name="Import Skeletal Mesh Armatures (Experimental)",
+        description=(
+            "Default whether map imports should append local armatures for skeletal map elements; "
+            "morph targets remain disabled"
+        ),
+        default=False
+    )
+
+    default_import_psa_animations: bpy.props.BoolProperty(
+        name="Import Basic PSA Animation (Experimental)",
+        description="Default whether opt-in skeletal previews should load one AnimToPlay PSA sequence",
+        default=False
+    )
+
     default_texture_format: bpy.props.EnumProperty(
         name="Default Texture Format",
         description="Default texture file extension expected in the UModel export directory",
@@ -428,6 +443,10 @@ class UMODELTOOLS_AP_addon_preferences(bpy.types.AddonPreferences):
         layout.prop(self, "default_texture_format")
         layout.prop(self, "default_import_backface_culling")
         layout.prop(self, "default_import_skeletal_mesh_as_static_fallback")
+        layout.prop(self, "default_import_skeletal_mesh_with_armature")
+        animation_col = layout.column()
+        animation_col.enabled = self.default_import_skeletal_mesh_with_armature
+        animation_col.prop(self, "default_import_psa_animations")
         layout.prop(self, "manual_asset_cache_dir")
         layout.prop(self, "save_missing_asset_report")
         layout.prop(self, "max_missing_assets_printed_to_console")

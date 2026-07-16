@@ -38,6 +38,9 @@ class ImportRuntimeStats:
     unsupported_skeletal_mesh_count: int = 0
     skipped_skeletal_mesh_count: int = 0
     static_fallback_skeletal_mesh_count: int = 0
+    rigged_skeletal_mesh_count: int = 0
+    imported_armature_count: int = 0
+    imported_animation_count: int = 0
     template_mesh_fallback_count: int = 0
     procedural_basic_shape_count: int = 0
     approximate_spline_mesh_count: int = 0
@@ -60,6 +63,9 @@ class ImportRuntimeStats:
             f"unsupported_skeletal_mesh_count={self.unsupported_skeletal_mesh_count}, "
             f"skipped_skeletal_mesh_count={self.skipped_skeletal_mesh_count}, "
             f"static_fallback_skeletal_mesh_count={self.static_fallback_skeletal_mesh_count}, "
+            f"rigged_skeletal_mesh_count={self.rigged_skeletal_mesh_count}, "
+            f"imported_armature_count={self.imported_armature_count}, "
+            f"imported_animation_count={self.imported_animation_count}, "
             f"template_mesh_fallback_count={self.template_mesh_fallback_count}, "
             f"procedural_basic_shape_count={self.procedural_basic_shape_count}, "
             f"approximate_spline_mesh_count={self.approximate_spline_mesh_count}, "
@@ -67,6 +73,14 @@ class ImportRuntimeStats:
             f"skipped_animation_count={self.skipped_animation_count}, "
             f"skipped_armature_count={self.skipped_armature_count}"
         )
+
+
+@dataclasses.dataclass
+class SkeletalAssetInstance:
+    objects: list[bpy.types.Object]
+    mesh_object: bpy.types.Object
+    armature_object: bpy.types.Object
+    source_library_path: str
 
 
 AssetImportPolicyError = material_cache.AssetImportPolicyError
@@ -402,6 +416,80 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
         except FileNotFoundError:
             return None
 
+    def _load_map_skeletal_asset(self,
+                                 context: bpy.types.Context,
+                                 asset_dir: str,
+                                 asset_path: str,
+                                 umodel_export_dir: str,
+                                 game_profile: str,
+                                 db: t.Optional[import_support.AssetDB] = None
+                                 ) -> SkeletalAssetInstance | None:
+        """Append one mesh+armature cache instance for experimental skeletal previews.
+
+        Skeletal previews deliberately use a separate cache file and append local
+        objects.  The normal map cache remains a one-object linked library, while
+        each armature instance can own an independent Action.
+        """
+
+        asset_path_abs_no_ext = os.path.join(asset_dir, os.path.splitext(asset_path)[0])
+        asset_path_abs = asset_path_abs_no_ext + '.skeletal.blend'
+
+        try:
+            if os.path.isfile(asset_path_abs) and self._is_asset_cache_stale_cached(
+                asset_path_abs=asset_path_abs,
+                asset_path=asset_path,
+                umodel_export_dir=umodel_export_dir,
+            ):
+                self._asset_cache_current.pop(self._path_cache_key(asset_path_abs), None)
+                os.remove(asset_path_abs)
+
+            if not os.path.isfile(asset_path_abs):
+                self._build_map_asset_cache(
+                    context=context,
+                    asset_library_dir=asset_dir,
+                    asset_path=asset_path,
+                    umodel_export_dir=umodel_export_dir,
+                    db=db,
+                    game_profile=game_profile,
+                    import_skeleton=True,
+                    import_morph_targets=False,
+                    asset_library_suffix='.skeletal',
+                )
+                self._asset_cache_current[self._path_cache_key(asset_path_abs)] = True
+
+            with utils.redirect_cstdout():
+                with bpy.data.libraries.load(asset_path_abs, link=False) as (data_from, data_to):
+                    data_to.objects = list(data_from.objects)
+
+            objects = [obj for obj in data_to.objects if obj is not None]
+            mesh_object = next(
+                (
+                    obj for obj in objects
+                    if obj.type == "MESH" and bool(obj.get(mesh_backends.MAIN_ASSET_OBJECT_KEY))
+                ),
+                None,
+            )
+            if mesh_object is None:
+                mesh_object = next((obj for obj in objects if obj.type == "MESH"), None)
+            armature_object = next((obj for obj in objects if obj.type == "ARMATURE"), None)
+            if mesh_object is None or armature_object is None:
+                for loaded_object in objects:
+                    bpy.data.objects.remove(loaded_object, do_unlink=True)
+                self._asset_cache_current.pop(self._path_cache_key(asset_path_abs), None)
+                if os.path.isfile(asset_path_abs):
+                    os.remove(asset_path_abs)
+                raise RuntimeError(f"Skeletal cache did not contain both a mesh and armature: {asset_path_abs}")
+
+            return SkeletalAssetInstance(
+                objects=objects,
+                mesh_object=mesh_object,
+                armature_object=armature_object,
+                source_library_path=asset_path_abs,
+            )
+
+        except FileNotFoundError:
+            return None
+
     def _is_asset_cache_stale(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
         if not self._asset_cache_is_current(asset_path_abs):
             utils.verbose_print(f"Rebuilding stale asset cache {asset_path_abs}; cache version changed")
@@ -482,7 +570,10 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                                asset_path: str,
                                umodel_export_dir: str,
                                game_profile: str,
-                               db: t.Optional[import_support.AssetDB] = None
+                               db: t.Optional[import_support.AssetDB] = None,
+                               import_skeleton: bool = False,
+                               import_morph_targets: bool = False,
+                               asset_library_suffix: str = "",
                                ) -> None:
         """Build one map mesh cache `.blend` and its material library dependencies.
 
@@ -552,8 +643,8 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
             options={
                 "preferred_backend": getattr(self, "mesh_import_backend", "AUTO"),
                 "prefer_pskx": True,
-                "import_skeleton": False,
-                "import_morph_targets": False,
+                "import_skeleton": import_skeleton,
+                "import_morph_targets": import_morph_targets,
                 "import_animations": False,
             },
         )
@@ -835,7 +926,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
 
         # obj.asset_generate_preview()
 
-        asset_abs_lib_path = os.path.join(asset_library_dir, asset_path_local_noext) + '.blend'
+        asset_abs_lib_path = os.path.join(asset_library_dir, asset_path_local_noext) + asset_library_suffix + '.blend'
         os.makedirs(os.path.dirname(asset_abs_lib_path), exist_ok=True)
         objects_to_write = set(result.objects or [obj])
         bpy.data.libraries.write(asset_abs_lib_path, objects_to_write, fake_user=True)
