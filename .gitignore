@@ -180,6 +180,7 @@ cython_debug/
 *.exe
 *.dll
 *.blend
+*.umodel-cache.json
 *.zip
 *.sqlite
 texture_analysis.sqlite

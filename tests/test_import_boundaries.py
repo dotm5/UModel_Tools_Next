@@ -100,6 +100,11 @@ def test_map_scene_graph_no_bpy_or_heavy_deps():
     _assert_no_heavy_deps("umodel_tools.map_scene_graph")
 
 
+def test_cache_metadata_no_bpy_or_heavy_deps():
+    _assert_bpy_not_loaded("umodel_tools.cache_metadata")
+    _assert_no_heavy_deps("umodel_tools.cache_metadata")
+
+
 # ── runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -111,6 +116,7 @@ def main():
         ("import_support no heavy deps", test_import_support_no_heavy_deps),
         ("props_txt_parser no heavy deps", test_props_txt_parser_no_heavy_deps),
         ("map_scene_graph no bpy/heavy deps", test_map_scene_graph_no_bpy_or_heavy_deps),
+        ("cache_metadata no bpy/heavy deps", test_cache_metadata_no_bpy_or_heavy_deps),
     ]
     passed = 0
     for label, test_fn in tests:

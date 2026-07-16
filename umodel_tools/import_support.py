@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import functools
 import os
 import re
 import shutil
@@ -83,6 +84,7 @@ AssetDatabase = AssetDB
 AssetIndex = AssetDB
 
 
+@functools.lru_cache(maxsize=4096)
 def path_cache_key(path: str) -> str:
     return os.path.normcase(os.path.realpath(os.path.abspath(path)))
 
@@ -120,15 +122,20 @@ def asset_cache_is_current(asset_path_abs: str, version_key: str, version: int) 
         obj = data_to.objects[0]
         mesh = getattr(obj, "data", None)
         materials = list(mesh.materials) if mesh is not None and hasattr(mesh, "materials") else []
+        current = int(obj.get(version_key, 0)) == version
+        bpy.data.objects.remove(obj, do_unlink=True)
         try:
-            return int(obj.get(version_key, 0)) == version
-        finally:
-            bpy.data.objects.remove(obj, do_unlink=True)
             if mesh is not None and mesh.users == 0:
                 bpy.data.meshes.remove(mesh, do_unlink=True)
-            for material in materials:
+        except ReferenceError:
+            pass
+        for material in materials:
+            try:
                 if material is not None and material.users == 0:
                     bpy.data.materials.remove(material, do_unlink=True)
+            except ReferenceError:
+                pass
+        return current
     except Exception:
         return False
 
@@ -141,6 +148,23 @@ class ImportCache:
 
 def linked_library_cache_key(lib_filepath: str, dtype: type[t.Any]) -> tuple[str, str]:
     return (path_cache_key(lib_filepath), dtype.__name__)
+
+
+def index_linked_libraries() -> dict[tuple[str, str], t.Any]:
+    """Index Blender libraries once so cache misses stay O(1) during import."""
+
+    import bpy  # pylint: disable=import-outside-toplevel
+
+    cache: dict[tuple[str, str], t.Any] = {}
+    for library in bpy.data.libraries:
+        try:
+            path_key = path_cache_key(bpy.path.abspath(library.filepath))
+            users = library.users_id
+        except ReferenceError:
+            continue
+        for data_block in users:
+            cache.setdefault((path_key, type(data_block).__name__), data_block)
+    return cache
 
 
 def linked_libraries_search_cached(
@@ -156,13 +180,7 @@ def linked_libraries_search_cached(
             return cached
         except ReferenceError:
             cache.pop(key, None)
-
-    from . import utils  # pylint: disable=import-outside-toplevel
-
-    data_block = utils.linked_libraries_search(lib_filepath, dtype)
-    if data_block is not None:
-        cache[key] = data_block
-    return data_block
+    return None
 
 
 def remember_linked_library(
@@ -195,6 +213,7 @@ def remove_loaded_asset_library(asset_lib_path: str) -> None:
 
 class LibraryLinker:
     linked_library_cache_key = staticmethod(linked_library_cache_key)
+    index_linked_libraries = staticmethod(index_linked_libraries)
     linked_libraries_search_cached = staticmethod(linked_libraries_search_cached)
     remember_linked_library = staticmethod(remember_linked_library)
     forget_linked_library = staticmethod(forget_linked_library)

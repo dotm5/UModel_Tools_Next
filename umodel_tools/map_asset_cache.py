@@ -5,6 +5,7 @@ import dataclasses
 import bpy
 
 from . import utils
+from . import cache_metadata
 from . import props_txt_parser
 from . import umodel_path_resolver
 from . import localization
@@ -130,13 +131,14 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
     _last_import_report: missing_asset_report.ImportReport = missing_asset_report.ImportReport()
 
     def _reset_import_runtime_state(self) -> None:
+        import_support.path_cache_key.cache_clear()
         self._unrecognized_texture_types.clear()
         self._has_warnings = False
         self._path_resolve_stats = umodel_path_resolver.UModelPathResolveStats()
         self._import_stats = ImportRuntimeStats()
         self._missing_warning_paths = set()
         self._missing_warning_printed_count = 0
-        self._linked_library_cache = {}
+        self._linked_library_cache = import_support.index_linked_libraries()
         self._asset_cache_current = {}
         self._material_cache_current = {}
         self._missing_asset_reporter = None
@@ -386,7 +388,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                 self._asset_cache_current.pop(self._path_cache_key(asset_path_abs), None)
                 self._forget_linked_library(asset_path_abs)
                 material_cache._remove_loaded_asset_library(asset_path_abs)
-                os.remove(asset_path_abs)
+                self._remove_asset_cache_files(asset_path_abs)
 
             if not os.path.isfile(asset_path_abs):
                 self._build_map_asset_cache(
@@ -442,7 +444,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                 umodel_export_dir=umodel_export_dir,
             ):
                 self._asset_cache_current.pop(self._path_cache_key(asset_path_abs), None)
-                os.remove(asset_path_abs)
+                self._remove_asset_cache_files(asset_path_abs)
 
             if not os.path.isfile(asset_path_abs):
                 self._build_map_asset_cache(
@@ -475,8 +477,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                 for loaded_object in objects:
                     bpy.data.objects.remove(loaded_object, do_unlink=True)
                 self._asset_cache_current.pop(self._path_cache_key(asset_path_abs), None)
-                if os.path.isfile(asset_path_abs):
-                    os.remove(asset_path_abs)
+                self._remove_asset_cache_files(asset_path_abs)
                 raise RuntimeError(f"Skeletal cache did not contain both a mesh and armature: {asset_path_abs}")
 
             return SkeletalAssetInstance(
@@ -489,29 +490,71 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
             return None
 
     def _is_asset_cache_stale(self, asset_path_abs: str, asset_path: str, umodel_export_dir: str) -> bool:
-        if not self._asset_cache_is_current(asset_path_abs):
+        metadata = cache_metadata.load_current_metadata(asset_path_abs, ASSET_CACHE_VERSION)
+        if metadata is not None:
+            dependency_change = cache_metadata.dependencies_changed(metadata)
+            if dependency_change is False:
+                return False
+            if dependency_change is True:
+                utils.verbose_print(f"Rebuilding stale asset cache {asset_path_abs}; source fingerprint changed")
+                return True
+        elif not self._asset_cache_is_current(asset_path_abs):
             utils.verbose_print(f"Rebuilding stale asset cache {asset_path_abs}; cache version changed")
             return True
 
-        source_paths = self._asset_cache_source_paths(
+        source_paths, dependencies_complete = self._asset_cache_dependencies(
             asset_path=asset_path,
             umodel_export_dir=umodel_export_dir,
         )
         if not source_paths:
+            self._write_asset_cache_metadata(
+                cache_path=asset_path_abs,
+                source_paths=(),
+                dependencies_complete=False,
+            )
             return False
 
-        cache_mtime = os.path.getmtime(asset_path_abs)
+        cache_mtime_ns = os.stat(asset_path_abs).st_mtime_ns
         stale_sources = [
             source_path for source_path in source_paths
-            if os.path.isfile(source_path) and os.path.getmtime(source_path) > cache_mtime
+            if os.path.isfile(source_path) and os.stat(source_path).st_mtime_ns > cache_mtime_ns
         ]
         if not stale_sources:
+            self._write_asset_cache_metadata(
+                cache_path=asset_path_abs,
+                source_paths=source_paths,
+                dependencies_complete=dependencies_complete,
+            )
             return False
 
         utils.verbose_print(
             f"Rebuilding stale asset cache {asset_path_abs}; newer source file: {stale_sources[0]}"
         )
         return True
+
+    @staticmethod
+    def _remove_asset_cache_files(asset_path_abs: str) -> None:
+        cache_metadata.remove_metadata(asset_path_abs)
+        try:
+            os.remove(asset_path_abs)
+        except FileNotFoundError:
+            pass
+
+    @staticmethod
+    def _write_asset_cache_metadata(
+        cache_path: str,
+        source_paths: t.Iterable[str],
+        dependencies_complete: bool,
+    ) -> None:
+        try:
+            cache_metadata.write_metadata(
+                cache_path=cache_path,
+                cache_version=ASSET_CACHE_VERSION,
+                source_paths=source_paths,
+                dependencies_complete=dependencies_complete,
+            )
+        except OSError as exc:
+            utils.verbose_print(f"Unable to write asset cache metadata for {cache_path}: {exc}")
 
     def _asset_cache_is_current(self, asset_path_abs: str) -> bool:
         return import_support.asset_cache_is_current(
@@ -520,8 +563,9 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
             ASSET_CACHE_VERSION,
         )
 
-    def _asset_cache_source_paths(self, asset_path: str, umodel_export_dir: str) -> list[str]:
+    def _asset_cache_dependencies(self, asset_path: str, umodel_export_dir: str) -> tuple[list[str], bool]:
         source_paths: list[str] = []
+        dependencies_complete = True
         asset_path_local_noext = os.path.splitext(asset_path)[0]
 
         mesh_resolved = self._resolve_umodel_path(
@@ -531,6 +575,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
         )
         if mesh_resolved.found and mesh_resolved.path is not None:
             source_paths.append(mesh_resolved.path)
+        dependencies_complete = dependencies_complete and mesh_resolved.status == "exact"
 
         mesh_props = self._resolve_umodel_path(
             umodel_export_dir=umodel_export_dir,
@@ -538,13 +583,14 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
             extensions=('.props.txt',),
         )
         if not mesh_props.found or mesh_props.path is None:
-            return source_paths
+            return source_paths, False
+        dependencies_complete = dependencies_complete and mesh_props.status == "exact"
 
         source_paths.append(mesh_props.path)
         try:
             _, material_descriptor_paths = props_txt_parser.parse_props_txt(mesh_props.path, mode='MESH')
         except OSError:
-            return source_paths
+            return source_paths, False
 
         for mat_desc_path in material_descriptor_paths:
             material_path_local_no_ext, _material_name = os.path.splitext(mat_desc_path)
@@ -559,8 +605,9 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
             )
             if material_props.found and material_props.path is not None:
                 source_paths.append(material_props.path)
+            dependencies_complete = dependencies_complete and material_props.status == "exact"
 
-        return source_paths
+        return source_paths, dependencies_complete
 
     def _build_map_asset_cache(self,
                                context: bpy.types.Context,
@@ -927,6 +974,15 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
         os.makedirs(os.path.dirname(asset_abs_lib_path), exist_ok=True)
         objects_to_write = set(result.objects or [obj])
         bpy.data.libraries.write(asset_abs_lib_path, objects_to_write, fake_user=True)
+        source_paths, dependencies_complete = self._asset_cache_dependencies(
+            asset_path=asset_path,
+            umodel_export_dir=umodel_export_dir,
+        )
+        self._write_asset_cache_metadata(
+            cache_path=asset_abs_lib_path,
+            source_paths=source_paths,
+            dependencies_complete=dependencies_complete,
+        )
 
         # cleanup
         data_blocks = [

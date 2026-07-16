@@ -18,21 +18,15 @@ MATERIAL_CACHE_VERSION_KEY = "umodel_tools_material_cache_version"
 
 PLACEHOLDER_MATERIAL_UNRESOLVED = "unresolved"
 PLACEHOLDER_MATERIAL_AMBIGUOUS = "ambiguous"
-PLACEHOLDER_TEXTURE_MISSING = "texture_missing"
-PLACEHOLDER_TEXTURE_AMBIGUOUS = "texture_ambiguous"
 
 _PLACEHOLDER_PBR_COLORS = {
     PLACEHOLDER_MATERIAL_UNRESOLVED: (0.45, 0.45, 0.45, 1.0),
     PLACEHOLDER_MATERIAL_AMBIGUOUS: (1.0, 0.78, 0.18, 1.0),
-    PLACEHOLDER_TEXTURE_MISSING: (0.2, 0.45, 1.0, 1.0),
-    PLACEHOLDER_TEXTURE_AMBIGUOUS: (1.0, 0.25, 0.75, 1.0),
 }
 
 _PLACEHOLDER_PBR_SUFFIXES = {
     PLACEHOLDER_MATERIAL_UNRESOLVED: "Unresolved_PBR",
     PLACEHOLDER_MATERIAL_AMBIGUOUS: "Ambiguous_PBR",
-    PLACEHOLDER_TEXTURE_MISSING: "Texture_Missing_PBR",
-    PLACEHOLDER_TEXTURE_AMBIGUOUS: "Texture_Ambiguous_PBR",
 }
 
 
@@ -487,18 +481,13 @@ class MaterialCacheMixin:
                                                       db=db)
                     else:
                         self._import_stats.missing_texture_count += 1
-                        texture_status = (
-                            PLACEHOLDER_TEXTURE_AMBIGUOUS
-                            if tex_path_resolved.status == "ambiguous"
-                            else PLACEHOLDER_TEXTURE_MISSING
-                        )
                         msg = (f"Warning: Material \"{material_name}\" referenced texture \"{tex_path}\", "
                                f"but it resolved as {tex_path_resolved.status}.")
                         self._record_missing_asset(
                             resource_type="texture",
                             json_asset_path=tex_path,
                             message=msg,
-                            fallback_used=texture_status,
+                            fallback_used="placeholder_color",
                             resolution=tex_path_resolved,
                             material_name=material_name,
                             texture_parameter_name=tex_type,

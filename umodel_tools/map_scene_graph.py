@@ -313,8 +313,13 @@ def parse_object_name(value: t.Any) -> tuple[str, str]:
 def is_static_mesh_reference(value: t.Any) -> bool:
     if not isinstance(value, dict):
         return False
-    object_type, _ = parse_object_name(value.get("ObjectName"))
-    return object_type == "StaticMesh" and bool(value.get("ObjectPath"))
+    if not value.get("ObjectPath"):
+        return False
+    object_name = value.get("ObjectName")
+    if not object_name:
+        return True
+    object_type, _ = parse_object_name(object_name)
+    return object_type == "StaticMesh"
 
 
 def basic_shape_name(object_path: str) -> str:

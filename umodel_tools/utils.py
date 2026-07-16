@@ -1,20 +1,12 @@
 import os
 import sys
 import typing as t
-import tempfile
 import contextlib
 import json
 
 import bpy
 
 from . import preferences
-
-
-tmphandle, tmppath = tempfile.mkstemp()
-#: Determines whether the OS's filesystem is case sensitive or not
-FS_CASE_INSENSITIVE = os.path.exists(tmppath.upper())
-os.close(tmphandle)
-os.remove(tmppath)
 
 
 def copy_object(obj: bpy.types.Object) -> bpy.types.Object:
@@ -40,22 +32,6 @@ def compare_meshes(first: bpy.types.Mesh, second: bpy.types.Mesh) -> bool:
             and len(first.polygons) == len(second.polygons)
             and len(first.loops) == len(second.loops)
             and len(first.edges) == len(second.edges))
-
-
-def compare_paths(first: str, second: str) -> bool:
-    """Compares that to paths are identical. Respects OS case sensitivity rules for the filesystem.
-
-    :param first: First path.
-    :param second: Second path.
-    :return: True if paths are identical, else False.
-    """
-    first = os.path.realpath(first)
-    second = os.path.realpath(second)
-
-    return (first.lower() == second.lower()) if FS_CASE_INSENSITIVE else (first == second)
-
-
-DataBlock: t.TypeAlias = bpy.types.Object | bpy.types.Material | bpy.types.Image
 
 
 def normalize_ue_name(value: t.Any, fallback: str = "Unnamed") -> str:
@@ -123,23 +99,6 @@ def set_socket_value(socket: bpy.types.NodeSocket, value: t.Any) -> None:
             socket.default_value = value
     else:
         socket.default_value = value
-
-
-def linked_libraries_search(lib_filepath: str, dtype: t.Type[DataBlock]) -> t.Optional[DataBlock]:
-    """Check already linked libraries for the associated data block and return it.
-
-    :param lib_filepath: Filepath of the library.
-    :param dtype: Datablock type.
-    :return: None or data-block (if found).
-    """
-
-    for lib in bpy.data.libraries:
-        if compare_paths(lib.filepath, lib_filepath):
-            for id_data in lib.users_id:
-                if isinstance(id_data, dtype):
-                    return id_data
-
-    return None
 
 
 def verbose_print(*args: t.Any):

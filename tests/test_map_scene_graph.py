@@ -107,6 +107,16 @@ def test_basic_shape_detection():
     assert module.basic_shape_name("Game/Content/Props/Cube") == ""
 
 
+def test_static_mesh_reference_accepts_legacy_path_only_shape():
+    module = load_module()
+    assert module.is_static_mesh_reference({"ObjectPath": "/Game/Props/Chair.Chair"})
+    assert not module.is_static_mesh_reference({
+        "ObjectPath": "/Game/Props/Chair.Chair",
+        "ObjectName": "Texture2D'Chair'",
+    })
+    assert not module.is_static_mesh_reference({"ObjectName": "StaticMesh'Chair'"})
+
+
 def test_real_wlbl_world_and_component_graph():
     module = load_module()
     with open(WLBl_PATH, mode="r", encoding="utf-8") as file:
@@ -146,6 +156,7 @@ def main():
         test_reference_graph_and_template_fallback,
         test_external_package_reference_is_not_misresolved,
         test_basic_shape_detection,
+        test_static_mesh_reference_accepts_legacy_path_only_shape,
         test_real_wlbl_world_and_component_graph,
         test_real_blueprint_created_spline_components_are_reachable,
     ]

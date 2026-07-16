@@ -52,6 +52,8 @@ def _ignore_dev_dirs(directory: str, names: t.Iterable[str]) -> set[str]:
             ignored.add(name)
         elif name.endswith(".pyc") or name.endswith(".pyo"):
             ignored.add(name)
+        elif name.endswith(".umodel-cache.json"):
+            ignored.add(name)
         elif name.lower().endswith(".zip"):
             ignored.add(name)
         elif fnmatch.fnmatchcase(name, "material_mapping_audit*.csv"):
@@ -102,6 +104,7 @@ def create_distribution(dist_path: t.Optional[str]):
                 "*.zip",
                 "*.pyc",
                 "*.pyo",
+                "*.umodel-cache.json",
                 "material_mapping_audit*.csv",
             )
 
