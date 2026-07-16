@@ -95,6 +95,11 @@ def test_props_txt_parser_no_heavy_deps():
     _assert_no_heavy_deps("umodel_tools.props_txt_parser")
 
 
+def test_map_scene_graph_no_bpy_or_heavy_deps():
+    _assert_bpy_not_loaded("umodel_tools.map_scene_graph")
+    _assert_no_heavy_deps("umodel_tools.map_scene_graph")
+
+
 # ── runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -105,6 +110,7 @@ def main():
         ("rule_module no heavy deps", test_rule_module_no_heavy_deps),
         ("import_support no heavy deps", test_import_support_no_heavy_deps),
         ("props_txt_parser no heavy deps", test_props_txt_parser_no_heavy_deps),
+        ("map_scene_graph no bpy/heavy deps", test_map_scene_graph_no_bpy_or_heavy_deps),
     ]
     passed = 0
     for label, test_fn in tests:

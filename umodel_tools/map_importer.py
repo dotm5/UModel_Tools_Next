@@ -15,9 +15,10 @@ from . import localization
 from . import missing_asset_report
 from . import world_environment
 from . import map_support
+from . import map_scene_graph
 from . import progress
 
-from .map_support import InstanceTransform, StaticMesh, get_parent_transform_matrix, parse_ue_object_name
+from .map_support import InstanceTransform, StaticMesh, get_reference_transform_matrix
 
 
 _SKELETAL_ENTITY_TYPES = {"SkeletalMeshComponent", "SkeletalMeshActor"}
@@ -262,7 +263,12 @@ class GameLight:
     def invalid(self) -> bool:
         return self.no_entity
 
-    def __init__(self, json_obj, json_entity) -> None:
+    def __init__(
+        self,
+        json_obj,
+        json_entity,
+        scene_graph: map_scene_graph.FModelSceneGraph | None = None,
+    ) -> None:
         self.entity_name = utils.normalize_ue_name(json_entity.get("Outer", 'Error'), fallback="Light")
         self.type = json_entity.get("Type", None)
 
@@ -285,9 +291,8 @@ class GameLight:
         if (scale := props.get("RelativeScale3D", None)) is not None:
             self.scale = [scale.get("X", 1), scale.get("Y", 1), scale.get("Z", 1)]
 
-        if ((parent := props.get("AttachParent", None)) is not None
-           and (obj_name := parent.get("ObjectName", None)) is not None):
-            self.parent_mtx = get_parent_transform_matrix(json_obj, *parse_ue_object_name(obj_name))
+        if isinstance((parent := props.get("AttachParent", None)), dict):
+            self.parent_mtx = get_reference_transform_matrix(json_obj, parent, scene_graph)
 
         if (temp := props.get("Temperature", None)) is not None:
             self.color = self.temp_to_color(temp)
@@ -416,6 +421,15 @@ class MapImporter(map_asset_cache.MapAssetCache):
         for lib in bpy.data.libraries:
             lib.reload()
 
+    def _get_procedural_basic_shape_source(self, shape_name: str) -> map_support.PreviewMeshSource:
+        sources = getattr(self, "_procedural_basic_shape_sources", None)
+        if sources is None:
+            sources = {}
+            self._procedural_basic_shape_sources = sources
+        if shape_name not in sources:
+            sources[shape_name] = map_support.create_basic_shape_source(shape_name)
+        return sources[shape_name]
+
     def _import_map(self,
                     context: bpy.types.Context,
                     map_path: str,
@@ -438,6 +452,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
             return False
 
         self._path_resolve_stats.reset()
+        self._procedural_basic_shape_sources = {}
         json_filename = utils.normalize_ue_name(os.path.basename(map_path), fallback="Imported_Map")
         map_name_no_ext = os.path.splitext(os.path.basename(map_path))[0]
         self._missing_asset_reporter = missing_asset_report.MissingAssetReporter(
@@ -464,6 +479,8 @@ class MapImporter(map_asset_cache.MapAssetCache):
         import_failed = False
         with open(map_path, mode='r', encoding='utf-8') as file:
             json_object = json.load(file)
+            scene_graph = map_scene_graph.FModelSceneGraph(json_object)
+            print(f"FModel scene graph summary: {scene_graph.summary()}")
             world_environment_applied = _apply_world_environment_to_visible_scenes(context, json_object)
             if world_environment_applied:
                 print(
@@ -500,7 +517,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
                         entity_type = entity.get('Type')
 
                         # static meshes
-                        if entity_type in StaticMesh.static_mesh_types:
+                        if scene_graph.should_import_preview_component(entity):
                             static_mesh_seen += 1
                             if map_support.should_print_static_mesh_progress(static_mesh_seen, last_progress_print):
                                 print(
@@ -515,7 +532,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
                                 )
                                 last_progress_print = time.monotonic()
 
-                            static_mesh = StaticMesh(json_object, entity, entity_type)
+                            static_mesh = StaticMesh(json_object, entity, entity_type, scene_graph=scene_graph)
                             self._set_missing_asset_context(
                                 actor_name=entity.get("Name", entity.get("Outer", "")),
                                 actor_object_path=entity.get("ObjectPath", ""),
@@ -544,6 +561,28 @@ class MapImporter(map_asset_cache.MapAssetCache):
                                 import_failed = True
                                 break
 
+                            procedural_basic_shape = False
+                            if (
+                                obj is None
+                                and static_mesh.basic_shape_name
+                                and not self._missing_policy_fails("mesh")
+                            ):
+                                self._import_stats.missing_mesh_count += 1
+                                obj = self._get_procedural_basic_shape_source(static_mesh.basic_shape_name)
+                                procedural_basic_shape = True
+                                self._record_missing_asset(
+                                    resource_type="mesh",
+                                    json_asset_path=static_mesh.raw_object_path or static_mesh.asset_path,
+                                    message=(
+                                        f"Mesh \"{static_mesh.asset_path}\" was not exported; "
+                                        f"using a procedural Engine BasicShapes/{static_mesh.basic_shape_name} preview."
+                                    ),
+                                    fallback_used="procedural_basic_shape",
+                                    resolution=self._last_missing_resolution,
+                                    component_name=entity_type,
+                                    resolution_status="procedural_fallback",
+                                )
+
                             if obj is None:
                                 skipped_count = static_mesh.expected_instance_count
                                 self._import_stats.missing_mesh_count += 1
@@ -566,10 +605,21 @@ class MapImporter(map_asset_cache.MapAssetCache):
 
                             imported_objects = static_mesh.link_object_instance(obj, import_collection)
                             self._import_stats.imported_instance_count += len(imported_objects)
+                            if procedural_basic_shape:
+                                self._import_stats.procedural_basic_shape_count += len(imported_objects)
+                                for imported_object in imported_objects:
+                                    imported_object["umodel_tools_asset_fallback"] = "procedural_basic_shape"
+                                    if not imported_object.get("umodel_tools_preview_fallback"):
+                                        imported_object["umodel_tools_preview_fallback"] = "procedural_basic_shape"
+                                    imported_object["umodel_tools_unreal_asset_path"] = static_mesh.raw_object_path
+                            if static_mesh.mesh_source == "template":
+                                self._import_stats.template_mesh_fallback_count += len(imported_objects)
+                            if static_mesh.component_kind == "spline":
+                                self._import_stats.approximate_spline_mesh_count += len(imported_objects)
 
                         # lights
                         elif entity_type in GameLight.light_types:
-                            light = GameLight(json_object, entity)
+                            light = GameLight(json_object, entity, scene_graph=scene_graph)
 
                             if light.invalid:
                                 utils.verbose_print(f"Info: Skipping instance of {light.entity_name}. "
@@ -591,6 +641,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
                                     umodel_export_dir=umodel_export_dir,
                                     db=db,
                                     game_profile=game_profile,
+                                    scene_graph=scene_graph,
                                 )
                             elif resource_type:
                                 self._record_non_map_asset_skip(entity, entity_type)
@@ -681,6 +732,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
         umodel_export_dir: str,
         db: import_support.AssetDB,
         game_profile: str,
+        scene_graph: map_scene_graph.FModelSceneGraph | None = None,
     ) -> None:
         props = entity.get("Properties", {}) or {}
         skeletal_mesh_ref = props.get("SkeletalMesh")
@@ -706,7 +758,12 @@ class MapImporter(map_asset_cache.MapAssetCache):
         static_props["StaticMesh"] = skeletal_mesh_ref
         static_entity["Properties"] = static_props
 
-        skeletal_mesh = StaticMesh(json_object, static_entity, "StaticMeshComponent")
+        skeletal_mesh = StaticMesh(
+            json_object,
+            static_entity,
+            "StaticMeshComponent",
+            scene_graph=scene_graph,
+        )
         self._set_missing_asset_context(
             actor_name=entity.get("Name", entity.get("Outer", "")),
             actor_object_path=entity.get("ObjectPath", ""),

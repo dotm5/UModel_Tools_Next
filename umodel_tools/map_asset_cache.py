@@ -38,6 +38,9 @@ class ImportRuntimeStats:
     unsupported_skeletal_mesh_count: int = 0
     skipped_skeletal_mesh_count: int = 0
     static_fallback_skeletal_mesh_count: int = 0
+    template_mesh_fallback_count: int = 0
+    procedural_basic_shape_count: int = 0
+    approximate_spline_mesh_count: int = 0
     skipped_morph_target_count: int = 0
     skipped_animation_count: int = 0
     skipped_armature_count: int = 0
@@ -57,6 +60,9 @@ class ImportRuntimeStats:
             f"unsupported_skeletal_mesh_count={self.unsupported_skeletal_mesh_count}, "
             f"skipped_skeletal_mesh_count={self.skipped_skeletal_mesh_count}, "
             f"static_fallback_skeletal_mesh_count={self.static_fallback_skeletal_mesh_count}, "
+            f"template_mesh_fallback_count={self.template_mesh_fallback_count}, "
+            f"procedural_basic_shape_count={self.procedural_basic_shape_count}, "
+            f"approximate_spline_mesh_count={self.approximate_spline_mesh_count}, "
             f"skipped_morph_target_count={self.skipped_morph_target_count}, "
             f"skipped_animation_count={self.skipped_animation_count}, "
             f"skipped_armature_count={self.skipped_armature_count}"

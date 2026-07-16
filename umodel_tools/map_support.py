@@ -11,6 +11,7 @@ import bpy
 import mathutils as mu
 
 from . import utils
+from . import map_scene_graph
 
 
 def split_object_path(object_path: str) -> str:
@@ -95,6 +96,55 @@ def get_parent_transform_matrix(json_obj: t.Any,
     return InstanceTransform().matrix_4x4
 
 
+def get_reference_transform_matrix(
+    json_obj: t.Any,
+    reference: t.Any,
+    scene_graph: map_scene_graph.FModelSceneGraph | None = None,
+    visited: set[int] | None = None,
+) -> mu.Matrix:
+    """Resolve a component reference and compose its AttachParent chain."""
+
+    entity = scene_graph.resolve_reference(reference) if scene_graph is not None else None
+    if entity is None and isinstance(reference, dict):
+        object_name = reference.get("ObjectName")
+        if isinstance(object_name, str):
+            try:
+                object_type, object_outer, leaf_name = parse_ue_object_name(object_name)
+            except (AssertionError, ValueError):
+                return InstanceTransform().matrix_4x4
+            entity = _find_entity(json_obj, object_type, object_outer, leaf_name)
+
+    if entity is None:
+        return InstanceTransform().matrix_4x4
+
+    visited = visited if visited is not None else set()
+    entity_id = id(entity)
+    if entity_id in visited:
+        return InstanceTransform().matrix_4x4
+    visited.add(entity_id)
+
+    props = entity.get("Properties")
+    if not isinstance(props, dict):
+        return InstanceTransform().matrix_4x4
+
+    local_matrix = _component_transform(props).matrix_4x4
+    parent = props.get("AttachParent")
+    if isinstance(parent, dict):
+        return get_reference_transform_matrix(json_obj, parent, scene_graph, visited) @ local_matrix
+    return local_matrix
+
+
+def _find_entity(json_obj: t.Any, obj_type: str, obj_outer: str, obj_name: str) -> dict[str, t.Any] | None:
+    for entity in json_obj:
+        if (
+            entity.get("Type") == obj_type
+            and entity.get("Outer") == obj_outer
+            and entity.get("Name") == obj_name
+        ):
+            return entity
+    return None
+
+
 class StaticMesh:
     static_mesh_types = [
         "StaticMeshComponent",
@@ -105,6 +155,10 @@ class StaticMesh:
     entity_name: str = ""
     asset_path: str = ""
     raw_object_path: str = ""
+    basic_shape_name: str = ""
+    mesh_source: str = "missing"
+    instance_source: str = "missing"
+    component_kind: str = "static"
     transform: InstanceTransform
     instance_transforms: list[InstanceTransform]
     parent_mtx: t.Optional[mu.Matrix] = None
@@ -118,25 +172,55 @@ class StaticMesh:
     not_rendered: bool = False
     invisible: bool = False
 
-    def __init__(self, json_obj: t.Any, json_entity: t.Any, entity_type: str) -> None:
+    def __init__(
+        self,
+        json_obj: t.Any,
+        json_entity: t.Any,
+        entity_type: str,
+        scene_graph: map_scene_graph.FModelSceneGraph | None = None,
+    ) -> None:
         self.entity_name = json_entity.get("Outer", "Error")
         self.instance_transforms = []
+        self.parent_mtx = None
+        self.no_entity = False
+        self.no_mesh = False
+        self.no_path = False
+        self.no_per_instance_data = False
+        self.base_shape = False
+        self.is_instanced = False
+        self.not_rendered = False
+        self.invisible = False
+        self.basic_shape_name = ""
+        self.mesh_source = "missing"
+        self.instance_source = "missing"
+        self.component_kind = "static"
 
-        if not (props := json_entity.get("Properties", None)):
+        component_view = scene_graph.component_view(json_entity) if scene_graph is not None else None
+
+        props = component_view.properties if component_view is not None else json_entity.get("Properties", None)
+        if not props:
             self.no_entity = True
             return
 
-        if not props.get("StaticMesh", None):
+        mesh_reference = component_view.mesh_reference if component_view is not None else props.get("StaticMesh", None)
+        if component_view is not None:
+            self.mesh_source = component_view.mesh_source
+            self.instance_source = component_view.instance_source
+            self.component_kind = component_view.component_kind
+        elif mesh_reference is not None:
+            self.mesh_source = "direct"
+
+        if not mesh_reference:
             self.no_mesh = True
             return
 
-        if not (object_path := props.get("StaticMesh").get("ObjectPath", None)) or object_path == "":
+        if not (object_path := mesh_reference.get("ObjectPath", None)) or object_path == "":
             self.no_path = True
             return
 
-        if "BasicShapes" in object_path:
+        self.basic_shape_name = map_scene_graph.basic_shape_name(object_path)
+        if self.basic_shape_name:
             self.base_shape = True
-            return
 
         if (render_in_main_pass := props.get("bRenderInMainPass", None)) is not None and not render_in_main_pass:
             self.not_rendered = True
@@ -145,9 +229,8 @@ class StaticMesh:
         if (is_visible := props.get("bVisible", None)) is not None and not is_visible:
             self.invisible = True
 
-        if ((parent := props.get("AttachParent", None)) is not None
-           and (obj_name := parent.get("ObjectName", None)) is not None):
-            self.parent_mtx = get_parent_transform_matrix(json_obj, *parse_ue_object_name(obj_name))
+        if isinstance((parent := props.get("AttachParent", None)), dict):
+            self.parent_mtx = get_reference_transform_matrix(json_obj, parent, scene_graph)
 
         objpath = split_object_path(object_path)
         self.raw_object_path = objpath
@@ -155,14 +238,19 @@ class StaticMesh:
         self.asset_path = os.path.normpath(objpath + ".uasset")
         self.asset_path = self.asset_path[1:] if self.asset_path.startswith(os.sep) else self.asset_path
 
-        match entity_type:
-            case "StaticMeshComponent":
+        match self.component_kind:
+            case "static":
                 self.transform = _component_transform(props)
 
-            case "InstancedStaticMeshComponent" | "HierarchicalInstancedStaticMeshComponent":
+            case "instanced":
                 self.is_instanced = True
 
-                if (instances := json_entity.get("PerInstanceSMData", None)) is None:
+                instances = (
+                    component_view.instance_data
+                    if component_view is not None
+                    else json_entity.get("PerInstanceSMData", None)
+                )
+                if instances is None:
                     self.no_per_instance_data = True
                     return
 
@@ -185,9 +273,16 @@ class StaticMesh:
 
                     self.instance_transforms.append(trs)
 
+            case "spline":
+                self.transform = _component_transform(props)
+                self._apply_spline_chord_transform(props)
+
+            case _:
+                self.transform = _component_transform(props)
+
     @property
     def invalid(self) -> bool:
-        return (self.no_path or self.no_entity or self.base_shape or self.no_mesh or self.no_per_instance_data
+        return (self.no_path or self.no_entity or self.no_mesh or self.no_per_instance_data
                 or self.not_rendered or self.invisible)
 
     def link_object_instance(self,
@@ -234,6 +329,18 @@ class StaticMesh:
             collection.objects.link(new_obj)
             objects.append(new_obj)
 
+        if self.component_kind == "spline":
+            for new_obj in objects:
+                new_obj["umodel_tools_geometry_fallback"] = "spline_chord_approximation"
+                new_obj["umodel_tools_preview_fallback"] = "spline_chord_approximation"
+                new_obj["umodel_tools_unreal_asset_path"] = self.raw_object_path
+        if self.mesh_source == "template":
+            for new_obj in objects:
+                new_obj["umodel_tools_reference_fallback"] = "template_mesh_reference"
+                if not new_obj.get("umodel_tools_preview_fallback"):
+                    new_obj["umodel_tools_preview_fallback"] = "template_mesh_reference"
+                new_obj["umodel_tools_unreal_asset_path"] = self.raw_object_path
+
         return objects
 
     @property
@@ -241,6 +348,41 @@ class StaticMesh:
         if self.invalid:
             return 0
         return len(self.instance_transforms) if self.is_instanced else 1
+
+    def _apply_spline_chord_transform(self, props: dict[str, t.Any]) -> None:
+        """Place an undeformed spline mesh along its start/end chord.
+
+        FModel deforms spline meshes in the GPU viewer.  Blender map recovery
+        cannot reproduce that without the source spline mesh evaluator, so the
+        generic fallback preserves the segment's position, direction, and
+        chord length and labels the result as an approximation.
+        """
+
+        spline = props.get("SplineParams")
+        if not isinstance(spline, dict):
+            return
+        start = _ue_vector_to_blender(spline.get("StartPos"))
+        end = _ue_vector_to_blender(spline.get("EndPos"))
+        if start is None or end is None:
+            return
+        direction = end - start
+        if direction.length <= 1e-8:
+            self.transform.pos = tuple(start)
+            return
+
+        forward_axis = str(props.get("ForwardAxis", "ESplineMeshAxis::X")).rsplit("::", 1)[-1]
+        axis = {
+            "X": mu.Vector((1.0, 0.0, 0.0)),
+            "Y": mu.Vector((0.0, 1.0, 0.0)),
+            "Z": mu.Vector((0.0, 0.0, 1.0)),
+        }.get(forward_axis, mu.Vector((1.0, 0.0, 0.0)))
+        rotation = axis.rotation_difference(direction.normalized()).to_euler("XYZ")
+        midpoint = (start + end) * 0.5
+        self.transform.pos = tuple(midpoint)
+        self.transform.rot_euler = tuple(rotation)
+        scale = list(self.transform.scale)
+        scale[{"X": 0, "Y": 1, "Z": 2}.get(forward_axis, 0)] *= direction.length
+        self.transform.scale = tuple(scale)
 
 
 def should_print_static_mesh_progress(static_mesh_seen: int,
@@ -280,3 +422,107 @@ def _component_transform(props: dict[str, t.Any]) -> InstanceTransform:
         trs.scale = (scale.get("X", 1), scale.get("Y", 1), scale.get("Z", 1))
 
     return trs
+
+
+def _ue_vector_to_blender(value: t.Any) -> mu.Vector | None:
+    if not isinstance(value, dict):
+        return None
+    return mu.Vector((
+        float(value.get("X", 0.0)) / 100.0,
+        float(value.get("Y", 0.0)) / -100.0,
+        float(value.get("Z", 0.0)) / 100.0,
+    ))
+
+
+class PreviewMeshSource:
+    """Minimal object-like wrapper accepted by ``StaticMesh.link_object_instance``."""
+
+    def __init__(self, name: str, data: bpy.types.Mesh) -> None:
+        self.name = name
+        self.data = data
+
+
+def create_basic_shape_source(shape_name: str) -> PreviewMeshSource:
+    """Create a correctly sized procedural replacement for Engine BasicShapes."""
+
+    vertices, faces = _basic_shape_geometry(shape_name)
+    mesh = bpy.data.meshes.new(f"UModelTools_{shape_name}_PreviewFallback")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    mesh["umodel_tools_preview_fallback"] = "procedural_basic_shape"
+    mesh["umodel_tools_basic_shape"] = shape_name
+    return PreviewMeshSource(shape_name, mesh)
+
+
+def _basic_shape_geometry(shape_name: str) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+    if shape_name == "Cube":
+        vertices = [
+            (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5),
+            (0.5, 0.5, -0.5), (-0.5, 0.5, -0.5),
+            (-0.5, -0.5, 0.5), (0.5, -0.5, 0.5),
+            (0.5, 0.5, 0.5), (-0.5, 0.5, 0.5),
+        ]
+        faces = [
+            (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+            (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7),
+        ]
+        return vertices, faces
+    if shape_name == "Plane":
+        return [(-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (0.5, 0.5, 0.0), (-0.5, 0.5, 0.0)], [(0, 1, 2, 3)]
+    if shape_name in {"Cylinder", "Cone"}:
+        return _radial_shape_geometry(shape_name, segments=32)
+    if shape_name == "Sphere":
+        return _sphere_geometry(segments=32, rings=16)
+    raise ValueError(f"Unsupported Engine BasicShapes primitive: {shape_name!r}")
+
+
+def _radial_shape_geometry(
+    shape_name: str,
+    segments: int,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+    bottom = [
+        (0.5 * math.cos(2.0 * math.pi * i / segments), 0.5 * math.sin(2.0 * math.pi * i / segments), -0.5)
+        for i in range(segments)
+    ]
+    if shape_name == "Cone":
+        vertices = [*bottom, (0.0, 0.0, 0.5)]
+        apex = segments
+        faces = [tuple(reversed(range(segments)))]
+        faces.extend((i, (i + 1) % segments, apex) for i in range(segments))
+        return vertices, faces
+
+    top = [(x, y, 0.5) for x, y, _ in bottom]
+    vertices = [*bottom, *top]
+    faces = [tuple(reversed(range(segments))), tuple(range(segments, segments * 2))]
+    faces.extend((i, (i + 1) % segments, (i + 1) % segments + segments, i + segments) for i in range(segments))
+    return vertices, faces
+
+
+def _sphere_geometry(
+    segments: int,
+    rings: int,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+    vertices = [(0.0, 0.0, 0.5)]
+    for ring in range(1, rings):
+        phi = math.pi * ring / rings
+        z = 0.5 * math.cos(phi)
+        radius = 0.5 * math.sin(phi)
+        for segment in range(segments):
+            theta = 2.0 * math.pi * segment / segments
+            vertices.append((radius * math.cos(theta), radius * math.sin(theta), z))
+    bottom = len(vertices)
+    vertices.append((0.0, 0.0, -0.5))
+
+    faces: list[tuple[int, ...]] = []
+    for segment in range(segments):
+        faces.append((0, 1 + segment, 1 + (segment + 1) % segments))
+    for ring in range(rings - 2):
+        current = 1 + ring * segments
+        following = current + segments
+        for segment in range(segments):
+            nxt = (segment + 1) % segments
+            faces.append((current + segment, following + segment, following + nxt, current + nxt))
+    last_ring = 1 + (rings - 2) * segments
+    for segment in range(segments):
+        faces.append((last_ring + segment, bottom, last_ring + (segment + 1) % segments))
+    return vertices, faces

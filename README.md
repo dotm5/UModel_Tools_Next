@@ -29,6 +29,8 @@ Imported Unreal map content in Blender, shown alongside the reconstructed materi
 ## Features
 
 - Map import from Unreal Engine JSON exports with static mesh placement.
+- FModel-style World/Level/Actor/component reference traversal with template and parent-transform fallbacks.
+- Engine BasicShapes recovery from exported meshes, with dependency-free procedural previews when those meshes are absent.
 - Blender asset cache generation and reuse for repeated map recovery work.
 - UModel/FModel path inference for exports that do not share one exact directory shape.
 - Map material reconstruction from Unreal material descriptors, FModel JSON, texture parameter patterns, and TOML rule datasets.
