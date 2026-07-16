@@ -524,9 +524,6 @@ class MapImporter(map_asset_cache.MapAssetCache):
                     ),
                     start=1,
                 ):
-                        if import_failed:
-                            break
-
                         if not entity.get('Type', None):
                             continue
 
@@ -548,7 +545,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
                                 )
                                 last_progress_print = time.monotonic()
 
-                            static_mesh = StaticMesh(json_object, entity, entity_type, scene_graph=scene_graph)
+                            static_mesh = StaticMesh(json_object, entity, scene_graph=scene_graph)
                             self._set_missing_asset_context(
                                 actor_name=entity.get("Name", entity.get("Outer", "")),
                                 actor_object_path=entity.get("ObjectPath", ""),
@@ -675,7 +672,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
                                         scene_graph=scene_graph,
                                     )
                             elif resource_type:
-                                self._record_non_map_asset_skip(entity, entity_type)
+                                self._record_non_map_asset_skip(entity, entity_type, resource_type)
 
         if import_failed:
             self._finish_map_import_report(import_collection)
@@ -702,11 +699,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
         self._last_import_report = report
         return report
 
-    def _record_non_map_asset_skip(self, entity: t.Any, entity_type: str) -> None:
-        resource_type = _classify_non_map_asset(entity_type)
-        if not resource_type:
-            return
-
+    def _record_non_map_asset_skip(self, entity: t.Any, entity_type: str, resource_type: str) -> None:
         props = entity.get("Properties", {}) or {}
         if resource_type == "skeletal_mesh" and "SkeletalMesh" not in props:
             return
@@ -779,7 +772,6 @@ class MapImporter(map_asset_cache.MapAssetCache):
         skeletal_mesh = StaticMesh(
             json_object,
             static_entity,
-            "StaticMeshComponent",
             scene_graph=scene_graph,
         )
         if skeletal_mesh.invalid:
@@ -943,7 +935,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
         props = entity.get("Properties", {}) or {}
         skeletal_mesh_ref = props.get("SkeletalMesh")
         if skeletal_mesh_ref is None:
-            self._record_non_map_asset_skip(entity, entity_type)
+            self._record_non_map_asset_skip(entity, entity_type, "skeletal_mesh")
             return
 
         if self._skeletal_component_has_animation(props):
@@ -956,7 +948,7 @@ class MapImporter(map_asset_cache.MapAssetCache):
             )
 
         if not getattr(self, "import_skeletal_mesh_as_static_fallback", True):
-            self._record_non_map_asset_skip(entity, entity_type)
+            self._record_non_map_asset_skip(entity, entity_type, "skeletal_mesh")
             return
 
         static_entity = dict(entity)
@@ -967,7 +959,6 @@ class MapImporter(map_asset_cache.MapAssetCache):
         skeletal_mesh = StaticMesh(
             json_object,
             static_entity,
-            "StaticMeshComponent",
             scene_graph=scene_graph,
         )
         self._set_missing_asset_context(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import os
 import struct
 
 
@@ -45,7 +44,6 @@ class PsaScaleKey:
 
 @dataclasses.dataclass(frozen=True)
 class PsaFile:
-    source_filepath: str
     bones: tuple[PsaBone, ...]
     sequences: tuple[PsaSequence, ...]
     keys: tuple[PsaKey, ...]
@@ -151,7 +149,6 @@ def load_psa(filepath: str) -> PsaFile:
             scale_keys.append(PsaScaleKey(scale=(values[0], values[1], values[2])))
 
     return PsaFile(
-        source_filepath=os.path.abspath(filepath),
         bones=bones,
         sequences=tuple(sequences),
         keys=tuple(keys),

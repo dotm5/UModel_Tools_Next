@@ -87,7 +87,7 @@ class PskMeshBackend(MeshImportBackend):
 
         from .. import psk_importer  # Imported lazily to keep backend registry importable without bpy.
 
-        import_skeleton = bool((context.options or {}).get("import_skeleton", False))
+        import_skeleton = bool(context.options.get("import_skeleton", False))
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
             imported = psk_importer.import_psk_mesh(

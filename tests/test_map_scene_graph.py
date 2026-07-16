@@ -83,6 +83,7 @@ def test_reference_graph_and_template_fallback():
     assert [component["Name"] for component in components] == ["Mesh0"]
 
     view = graph.component_view(components[0])
+    assert graph.component_view(components[0]) is view
     assert view.mesh_source == "template"
     assert view.instance_source == "template"
     assert view.component_kind == "instanced"

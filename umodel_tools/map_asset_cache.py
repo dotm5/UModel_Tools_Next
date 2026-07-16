@@ -22,6 +22,8 @@ FAIL_IMPORT = "FAIL_IMPORT"
 
 ASSET_CACHE_VERSION = 5
 ASSET_CACHE_VERSION_KEY = "umodel_tools_asset_cache_version"
+_SKELETAL_CACHE_SUFFIX = ".skeletal"
+
 
 @dataclasses.dataclass
 class ImportRuntimeStats:
@@ -78,7 +80,6 @@ class ImportRuntimeStats:
 @dataclasses.dataclass
 class SkeletalAssetInstance:
     objects: list[bpy.types.Object]
-    mesh_object: bpy.types.Object
     armature_object: bpy.types.Object
     source_library_path: str
 
@@ -432,7 +433,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
         """
 
         asset_path_abs_no_ext = os.path.join(asset_dir, os.path.splitext(asset_path)[0])
-        asset_path_abs = asset_path_abs_no_ext + '.skeletal.blend'
+        asset_path_abs = asset_path_abs_no_ext + _SKELETAL_CACHE_SUFFIX + '.blend'
 
         try:
             if os.path.isfile(asset_path_abs) and self._is_asset_cache_stale_cached(
@@ -452,8 +453,6 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                     db=db,
                     game_profile=game_profile,
                     import_skeleton=True,
-                    import_morph_targets=False,
-                    asset_library_suffix='.skeletal',
                 )
                 self._asset_cache_current[self._path_cache_key(asset_path_abs)] = True
 
@@ -482,7 +481,6 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
 
             return SkeletalAssetInstance(
                 objects=objects,
-                mesh_object=mesh_object,
                 armature_object=armature_object,
                 source_library_path=asset_path_abs,
             )
@@ -572,8 +570,6 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                                game_profile: str,
                                db: t.Optional[import_support.AssetDB] = None,
                                import_skeleton: bool = False,
-                               import_morph_targets: bool = False,
-                               asset_library_suffix: str = "",
                                ) -> None:
         """Build one map mesh cache `.blend` and its material library dependencies.
 
@@ -644,7 +640,7 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
                 "preferred_backend": getattr(self, "mesh_import_backend", "AUTO"),
                 "prefer_pskx": True,
                 "import_skeleton": import_skeleton,
-                "import_morph_targets": import_morph_targets,
+                "import_morph_targets": False,
                 "import_animations": False,
             },
         )
@@ -926,7 +922,8 @@ class MapAssetCache(material_cache.MaterialCacheMixin):
 
         # obj.asset_generate_preview()
 
-        asset_abs_lib_path = os.path.join(asset_library_dir, asset_path_local_noext) + asset_library_suffix + '.blend'
+        cache_suffix = _SKELETAL_CACHE_SUFFIX if import_skeleton else ""
+        asset_abs_lib_path = os.path.join(asset_library_dir, asset_path_local_noext) + cache_suffix + '.blend'
         os.makedirs(os.path.dirname(asset_abs_lib_path), exist_ok=True)
         objects_to_write = set(result.objects or [obj])
         bpy.data.libraries.write(asset_abs_lib_path, objects_to_write, fake_user=True)

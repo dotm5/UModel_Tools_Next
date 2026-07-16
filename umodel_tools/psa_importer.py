@@ -57,7 +57,7 @@ def import_psa_action(
         bone.name.rstrip().casefold(): bone
         for bone in armature_object.data.bones
     }
-    psa_names = [bone.name.rstrip() for bone in psa.bones[:sequence.bone_count]]
+    psa_names = [bone.name.rstrip() for bone in psa.bones]
     mapped_armature_names = {
         armature_bones_by_name[name.casefold()].name
         for name in psa_names
@@ -93,6 +93,7 @@ def import_psa_action(
     if matched_bone_count == 0:
         raise ValueError("No PSA bones matched the target armature.")
 
+    source_filepath = os.path.abspath(filepath)
     action = bpy.data.actions.new(name=sequence.name or os.path.splitext(os.path.basename(filepath))[0])
     slot = action.slots.new("OBJECT", armature_object.name)
     channelbag = anim_utils.action_ensure_channelbag_for_slot(action, slot)
@@ -128,29 +129,29 @@ def import_psa_action(
             key = sequence_keys[key_index]
             scale = sequence_scale_keys[key_index].scale if has_scale_keys else (1.0, 1.0, 1.0)
             values = _calculate_pose_values(import_bone, key, scale, translation_scale)
-            for curve_index, value in enumerate(values[:len(curves)]):
-                curve_values[curve_index].append(float(value))
+            for values_for_curve, value in zip(curve_values, values):
+                values_for_curve.append(float(value))
 
         for curve, values in zip(curves, curve_values):
             _write_linear_keyframes(curve, values)
         fcurve_count += len(curves)
 
-    action["umodel_tools_psa_source"] = os.path.abspath(filepath)
+    action["umodel_tools_psa_source"] = source_filepath
     action["umodel_tools_psa_sequence"] = sequence.name
     action["umodel_tools_psa_fps"] = sequence.fps
     action["umodel_tools_psa_basic_preview"] = True
 
     animation_data = armature_object.animation_data_create()
     animation_data.action = action
-    armature_object["umodel_tools_psa_source"] = os.path.abspath(filepath)
+    armature_object["umodel_tools_psa_source"] = source_filepath
     armature_object["umodel_tools_psa_sequence"] = sequence.name
 
     scene = bpy.context.scene
     scene.frame_start = min(scene.frame_start, 0)
-    scene.frame_end = max(scene.frame_end, 0, frame_count - 1)
+    scene.frame_end = max(scene.frame_end, frame_count - 1)
     rounded_fps = max(1, round(sequence.fps))
     scene.render.fps = rounded_fps
-    scene.render.fps_base = rounded_fps / sequence.fps if sequence.fps > 0.0 else 1.0
+    scene.render.fps_base = rounded_fps / sequence.fps
 
     return PsaImportResult(
         action=action,

@@ -146,18 +146,11 @@ def _find_entity(json_obj: t.Any, obj_type: str, obj_outer: str, obj_name: str) 
 
 
 class StaticMesh:
-    static_mesh_types = [
-        "StaticMeshComponent",
-        "InstancedStaticMeshComponent",
-        "HierarchicalInstancedStaticMeshComponent",
-    ]
-
     entity_name: str = ""
     asset_path: str = ""
     raw_object_path: str = ""
     basic_shape_name: str = ""
     mesh_source: str = "missing"
-    instance_source: str = "missing"
     component_kind: str = "static"
     transform: InstanceTransform
     instance_transforms: list[InstanceTransform]
@@ -167,7 +160,6 @@ class StaticMesh:
     no_mesh: bool = False
     no_path: bool = False
     no_per_instance_data: bool = False
-    base_shape: bool = False
     is_instanced: bool = False
     not_rendered: bool = False
     invisible: bool = False
@@ -176,7 +168,6 @@ class StaticMesh:
         self,
         json_obj: t.Any,
         json_entity: t.Any,
-        entity_type: str,
         scene_graph: map_scene_graph.FModelSceneGraph | None = None,
     ) -> None:
         self.entity_name = json_entity.get("Outer", "Error")
@@ -186,13 +177,11 @@ class StaticMesh:
         self.no_mesh = False
         self.no_path = False
         self.no_per_instance_data = False
-        self.base_shape = False
         self.is_instanced = False
         self.not_rendered = False
         self.invisible = False
         self.basic_shape_name = ""
         self.mesh_source = "missing"
-        self.instance_source = "missing"
         self.component_kind = "static"
 
         component_view = scene_graph.component_view(json_entity) if scene_graph is not None else None
@@ -205,7 +194,6 @@ class StaticMesh:
         mesh_reference = component_view.mesh_reference if component_view is not None else props.get("StaticMesh", None)
         if component_view is not None:
             self.mesh_source = component_view.mesh_source
-            self.instance_source = component_view.instance_source
             self.component_kind = component_view.component_kind
         elif mesh_reference is not None:
             self.mesh_source = "direct"
@@ -214,13 +202,11 @@ class StaticMesh:
             self.no_mesh = True
             return
 
-        if not (object_path := mesh_reference.get("ObjectPath", None)) or object_path == "":
+        if not (object_path := mesh_reference.get("ObjectPath", None)):
             self.no_path = True
             return
 
         self.basic_shape_name = map_scene_graph.basic_shape_name(object_path)
-        if self.basic_shape_name:
-            self.base_shape = True
 
         if (render_in_main_pass := props.get("bRenderInMainPass", None)) is not None and not render_in_main_pass:
             self.not_rendered = True
@@ -238,47 +224,36 @@ class StaticMesh:
         self.asset_path = os.path.normpath(objpath + ".uasset")
         self.asset_path = self.asset_path[1:] if self.asset_path.startswith(os.sep) else self.asset_path
 
-        match self.component_kind:
-            case "static":
-                self.transform = _component_transform(props)
+        self.transform = _component_transform(props)
+        if self.component_kind == "instanced":
+            self.is_instanced = True
+            instances = (
+                component_view.instance_data
+                if component_view is not None
+                else json_entity.get("PerInstanceSMData", None)
+            )
+            if instances is None:
+                self.no_per_instance_data = True
+                return
 
-            case "instanced":
-                self.is_instanced = True
+            for instance in instances:
+                trs = InstanceTransform()
 
-                instances = (
-                    component_view.instance_data
-                    if component_view is not None
-                    else json_entity.get("PerInstanceSMData", None)
-                )
-                if instances is None:
-                    self.no_per_instance_data = True
-                    return
+                if (trs_data := instance.get("TransformData", None)) is not None:
+                    if (pos := trs_data.get("Translation", None)) is not None:
+                        trs.pos = (pos.get("X") / 100, pos.get("Y") / -100, pos.get("Z") / 100)
 
-                self.transform = _component_transform(props)
+                    if (rot := trs_data.get("Rotation", None)) is not None:
+                        rot_quat = mu.Quaternion((rot.get("W"), rot.get("X"), rot.get("Y"), rot.get("Z")))
+                        quat_to_euler: mu.Euler = rot_quat.to_euler()
+                        trs.rot_euler = (-quat_to_euler.x, quat_to_euler.y, -quat_to_euler.z)
 
-                for instance in instances:
-                    trs = InstanceTransform()
+                    if (scale := trs_data.get("Scale3D", None)) is not None:
+                        trs.scale = (scale.get("X", 1), scale.get("Y", 1), scale.get("Z", 1))
 
-                    if (trs_data := instance.get("TransformData", None)) is not None:
-                        if (pos := trs_data.get("Translation", None)) is not None:
-                            trs.pos = (pos.get("X") / 100, pos.get("Y") / -100, pos.get("Z") / 100)
-
-                        if (rot := trs_data.get("Rotation", None)) is not None:
-                            rot_quat = mu.Quaternion((rot.get("W"), rot.get("X"), rot.get("Y"), rot.get("Z")))
-                            quat_to_euler: mu.Euler = rot_quat.to_euler()
-                            trs.rot_euler = (-quat_to_euler.x, quat_to_euler.y, -quat_to_euler.z)
-
-                        if (scale := trs_data.get("Scale3D", None)) is not None:
-                            trs.scale = (scale.get("X", 1), scale.get("Y", 1), scale.get("Z", 1))
-
-                    self.instance_transforms.append(trs)
-
-            case "spline":
-                self.transform = _component_transform(props)
-                self._apply_spline_chord_transform(props)
-
-            case _:
-                self.transform = _component_transform(props)
+                self.instance_transforms.append(trs)
+        elif self.component_kind == "spline":
+            self._apply_spline_chord_transform(props)
 
     @property
     def invalid(self) -> bool:
@@ -288,10 +263,6 @@ class StaticMesh:
     def link_object_instance(self,
                              obj: bpy.types.Object,
                              collection: bpy.types.Collection) -> list[bpy.types.Object]:
-        if self.invalid:
-            print(f"Refusing to import {self.entity_name} due to failed checks.")
-            return []
-
         objects = []
         trs = self.transform
 
@@ -319,23 +290,22 @@ class StaticMesh:
             )
 
             if self.parent_mtx is None:
-                new_obj.scale = (trs.scale[0], trs.scale[1], trs.scale[2])
-                new_obj.location = (trs.pos[0], trs.pos[1], trs.pos[2])
+                new_obj.scale = trs.scale
+                new_obj.location = trs.pos
                 new_obj.rotation_mode = "XYZ"
-                new_obj.rotation_euler = mu.Euler((trs.rot_euler[0], trs.rot_euler[1], trs.rot_euler[2]), "XYZ")
+                new_obj.rotation_euler = mu.Euler(trs.rot_euler, "XYZ")
             else:
                 new_obj.matrix_world = self.parent_mtx @ trs.matrix_4x4
 
             collection.objects.link(new_obj)
             objects.append(new_obj)
 
-        if self.component_kind == "spline":
-            for new_obj in objects:
+        for new_obj in objects:
+            if self.component_kind == "spline":
                 new_obj["umodel_tools_geometry_fallback"] = "spline_chord_approximation"
                 new_obj["umodel_tools_preview_fallback"] = "spline_chord_approximation"
                 new_obj["umodel_tools_unreal_asset_path"] = self.raw_object_path
-        if self.mesh_source == "template":
-            for new_obj in objects:
+            if self.mesh_source == "template":
                 new_obj["umodel_tools_reference_fallback"] = "template_mesh_reference"
                 if not new_obj.get("umodel_tools_preview_fallback"):
                     new_obj["umodel_tools_preview_fallback"] = "template_mesh_reference"
@@ -345,8 +315,6 @@ class StaticMesh:
 
     @property
     def expected_instance_count(self) -> int:
-        if self.invalid:
-            return 0
         return len(self.instance_transforms) if self.is_instanced else 1
 
     def _apply_spline_chord_transform(self, props: dict[str, t.Any]) -> None:

@@ -54,8 +54,6 @@ _BASIC_SHAPE_NAMES = {
 class ComponentView:
     """Resolved mesh-facing fields for one component export."""
 
-    entity: dict[str, t.Any]
-    entity_type: str
     properties: dict[str, t.Any]
     mesh_reference: dict[str, t.Any] | None
     instance_data: list[dict[str, t.Any]] | None
@@ -71,11 +69,15 @@ class FModelSceneGraph:
         # Preserve null/unknown export slots because FPackageIndex values are
         # zero-based positions in the original export array.
         self.entities: list[t.Any] = list(entities) if isinstance(entities, list) else []
-        self.package_name = self._find_package_name()
+        self.package_name = ""
         self._name_index: dict[tuple[str, str], list[dict[str, t.Any]]] = {}
+        self._entity_ids: set[int] = set()
         for entity in self.entities:
             if not isinstance(entity, dict):
                 continue
+            self._entity_ids.add(id(entity))
+            if not self.package_name and entity.get("Type") == "World" and entity.get("Package"):
+                self.package_name = str(entity["Package"])
             key = (str(entity.get("Type", "")), str(entity.get("Name", "")))
             self._name_index.setdefault(key, []).append(entity)
         self._persistent_level_resolved = False
@@ -83,14 +85,7 @@ class FModelSceneGraph:
         self._persistent_level_actors_cache: list[dict[str, t.Any]] | None = None
         self._actor_components_cache: dict[int, list[dict[str, t.Any]]] = {}
         self._actor_component_id_cache: set[int] | None = None
-
-    def _find_package_name(self) -> str:
-        for entity in self.entities:
-            if not isinstance(entity, dict):
-                continue
-            if entity.get("Type") == "World" and entity.get("Package"):
-                return str(entity["Package"])
-        return ""
+        self._component_view_cache: dict[int, ComponentView] = {}
 
     def resolve_reference(self, reference: t.Any) -> dict[str, t.Any] | None:
         """Resolve an internal FPackageIndex-style JSON reference.
@@ -136,6 +131,13 @@ class FModelSceneGraph:
     def component_view(self, entity: dict[str, t.Any]) -> ComponentView:
         """Resolve the fields FModel uses to preview a mesh component."""
 
+        entity_id = id(entity)
+        cacheable = entity_id in self._entity_ids
+        if cacheable:
+            cached = self._component_view_cache.get(entity_id)
+            if cached is not None:
+                return cached
+
         properties = entity.get("Properties")
         if not isinstance(properties, dict):
             properties = {}
@@ -161,9 +163,7 @@ class FModelSceneGraph:
                 break
 
         entity_type = str(entity.get("Type", ""))
-        return ComponentView(
-            entity=entity,
-            entity_type=entity_type,
+        view = ComponentView(
             properties=properties,
             mesh_reference=mesh_reference,
             instance_data=instance_data,
@@ -171,6 +171,9 @@ class FModelSceneGraph:
             instance_source=instance_source,
             component_kind=_component_kind(entity_type, properties, instance_data),
         )
+        if cacheable:
+            self._component_view_cache[entity_id] = view
+        return view
 
     def is_preview_mesh_component(self, entity: dict[str, t.Any]) -> bool:
         """Return whether an export can be handled as preview mesh geometry."""
@@ -275,11 +278,6 @@ class FModelSceneGraph:
 
     def summary(self) -> str:
         actors = self.persistent_level_actors()
-        actor_components = {
-            id(component)
-            for actor in actors
-            for component in self.actor_components(actor)
-        }
         preview_components = [
             entity for entity in self.entities
             if isinstance(entity, dict) and self.is_preview_mesh_component(entity)
@@ -293,7 +291,8 @@ class FModelSceneGraph:
         return (
             f"package={self.package_name or '<unknown>'}, "
             f"entities={len(self.entities)}, actors={len(actors)}, "
-            f"actor_components={len(actor_components)}, preview_components={len(preview_components)}, "
+            f"actor_components={len(self._actor_component_id_cache or ())}, "
+            f"preview_components={len(preview_components)}, "
             f"importable_components={len(importable_components)}, template_meshes={template_meshes}"
         )
 
