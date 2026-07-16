@@ -35,7 +35,7 @@ from . import localization  # nopep8 pylint: disable=wrong-import-position
 bl_info = {
     "name": "UModel Tools Next",
     "author": "dotm5 (fork maintainer), Skarn (original author)",
-    "version": (1, 3, 0),
+    "version": (1, 4, 0),
     "blender": (5, 1, 0),
     "description": "Map-focused UModel/FModel recovery tools for Blender",
     "doc_url": "https://github.com/dotm5/UModel_Tools_Next",

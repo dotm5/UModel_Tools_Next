@@ -171,13 +171,22 @@ def prune_third_party(third_party_dir: str):
     if not os.path.isdir(third_party_dir):
         return
 
-    for root, dirs, _ in os.walk(third_party_dir):
+    for root, dirs, files in os.walk(third_party_dir, topdown=True):
         for subdir in list(dirs):
             if (
                 subdir == 'tests'
                 or subdir.endswith('.dist-info')
+                or subdir == '__pycache__'
             ):
                 shutil.rmtree(os.path.join(root, subdir), ignore_errors=True)
+                dirs.remove(subdir)
+
+        for filename in files:
+            if filename.endswith(('.pyc', '.pyo')):
+                try:
+                    os.remove(os.path.join(root, filename))
+                except OSError:
+                    pass
 
     shutil.rmtree(os.path.join(third_party_dir, 'bin'), ignore_errors=True)
 
